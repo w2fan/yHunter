@@ -1,5 +1,4 @@
-import { spawn } from "node:child_process";
-
+import { spawnCurlText } from "@/lib/curl";
 import type { ManagerNavPoint, ProductMapping, ProductSnapshot } from "@/lib/types";
 
 type ManagerHistoryFetchResult = {
@@ -70,34 +69,7 @@ function normalizeRegistrationCode(raw: string | undefined): string | undefined 
 }
 
 async function curlText(args: string[], stdin?: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("curl.exe", args);
-    let out = "";
-    let err = "";
-
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-
-    child.stdout.on("data", (chunk) => {
-      out += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      err += chunk;
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(err || `curl exited with code ${code}`));
-        return;
-      }
-      resolve(out);
-    });
-
-    if (stdin) {
-      child.stdin.write(stdin, "utf8");
-    }
-    child.stdin.end();
-  });
+  return spawnCurlText(args, stdin);
 }
 
 async function spdbWmSearch<T>(payload: Record<string, unknown>): Promise<T[]> {

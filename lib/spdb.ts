@@ -1,5 +1,4 @@
-import { spawn } from "node:child_process";
-
+import { spawnCurlText } from "@/lib/curl";
 import type { Holding, ProductSnapshot } from "@/lib/types";
 
 const SEARCH_URL = "https://per.spdb.com.cn/api/search";
@@ -77,8 +76,8 @@ async function invokeSpdbSearch(searchword: string, page = 1, size = PAGE_SIZE):
     searchword
   });
 
-  return new Promise((resolve, reject) => {
-    const child = spawn("curl.exe", [
+  const stdout = await spawnCurlText(
+    [
       "-s",
       "-X",
       "POST",
@@ -87,36 +86,11 @@ async function invokeSpdbSearch(searchword: string, page = 1, size = PAGE_SIZE):
       "--data-binary",
       "@-",
       SEARCH_URL
-    ]);
+    ],
+    payload
+  );
 
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(stderr || `curl exited with code ${code}`));
-        return;
-      }
-      try {
-        resolve(JSON.parse(stdout) as SearchResponse);
-      } catch (error) {
-        reject(error);
-      }
-    });
-
-    child.stdin.write(payload, "utf8");
-    child.stdin.end();
-  });
+  return JSON.parse(stdout) as SearchResponse;
 }
 
 function isTargetCashProduct(product: ProductSnapshot): boolean {

@@ -1,7 +1,6 @@
-import { spawn } from "node:child_process";
-
 import { PDFParse } from "pdf-parse";
 
+import { spawnCurl } from "@/lib/curl";
 import type { ProductMapping, ProductSnapshot } from "@/lib/types";
 
 const SEARCH_URL = "https://per.spdb.com.cn/api/search";
@@ -110,32 +109,7 @@ async function curlBinary(args: string[], stdin?: string): Promise<Buffer> {
 }
 
 async function curl(args: string[], stdin?: string): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("curl.exe", args);
-    const stdoutChunks: Buffer[] = [];
-    let stderr = "";
-
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdoutChunks.push(chunk);
-    });
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(stderr || `curl exited with code ${code}`));
-        return;
-      }
-      resolve(Buffer.concat(stdoutChunks));
-    });
-
-    if (stdin) {
-      child.stdin.write(stdin, "utf8");
-    }
-    child.stdin.end();
-  });
+  return spawnCurl(args, stdin);
 }
 
 function pickBestDocument(documents: SpdbDocument[], productCode: string): SpdbDocument | null {
