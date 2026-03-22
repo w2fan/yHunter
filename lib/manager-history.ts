@@ -353,7 +353,14 @@ async function citicGet<T>(path: string, params: Record<string, string | number>
     query.set(key, String(value));
   }
 
-  const stdout = await curlText(["-s", `https://wechat.citic-wealth.com${path}?${query.toString()}`]);
+  const stdout = await curlText([
+    "-s",
+    "--connect-timeout",
+    "8",
+    "--max-time",
+    "20",
+    `https://wechat.citic-wealth.com${path}?${query.toString()}`
+  ]);
   return JSON.parse(stdout) as CiticResponse<T>;
 }
 
