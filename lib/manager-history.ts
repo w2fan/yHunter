@@ -1359,7 +1359,11 @@ export async function fetchManagerHistory(
         productCode: product.productCode,
         result: await adapter.fetchHistory(product, productMappings[product.productCode])
       };
-    } catch {
+    } catch (error) {
+      console.error(
+        `[manager-history] ${adapter.managerName} ${product.productCode} ${product.productName} failed:`,
+        error
+      );
       processed += 1;
       return {
         productCode: product.productCode,

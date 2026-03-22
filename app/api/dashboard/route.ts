@@ -137,6 +137,7 @@ export async function GET() {
     finishRefreshProgress("completed", "刷新完成");
     return NextResponse.json(dashboard);
   } catch (error) {
+    console.error("[api/dashboard] refresh failed:", error);
     finishRefreshProgress("failed", error instanceof Error ? error.message : "刷新失败");
     const message = error instanceof Error ? error.message : "未知错误";
     return NextResponse.json({ message }, { status: 500 });
