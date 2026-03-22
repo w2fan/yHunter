@@ -79,6 +79,8 @@ async function invokeSpdbSearch(searchword: string, page = 1, size = PAGE_SIZE):
   const stdout = await spawnCurlText(
     [
       "-s",
+      "-k",
+      "--tlsv1.2",
       "-X",
       "POST",
       "-H",

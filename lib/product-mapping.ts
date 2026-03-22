@@ -52,6 +52,8 @@ async function spdbSearchDocuments(productCode: string): Promise<SpdbDocument[]>
 
   const stdout = await curlText([
     "-s",
+    "-k",
+    "--tlsv1.2",
     "-X",
     "POST",
     "-H",

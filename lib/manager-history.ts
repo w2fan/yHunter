@@ -231,6 +231,8 @@ async function spdbWmSearch<T>(payload: Record<string, unknown>): Promise<T[]> {
   const stdout = await curlText(
     [
       "-s",
+      "-k",
+      "--tlsv1.2",
       "-X",
       "POST",
       "-H",
