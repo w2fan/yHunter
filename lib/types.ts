@@ -11,7 +11,7 @@ export type Holding = {
 export type ProductMapping = {
   managerProductCode?: string;
   registrationCode?: string;
-  source?: "manual" | "spdb_pdf" | "manager_site";
+  source?: "manual" | "spdb_pdf" | "manager_site" | "partner_site";
 };
 
 export type ProductSnapshot = {
@@ -45,7 +45,7 @@ export type ManagerNavPoint = {
   annualizedYield: number | null;
   per10kProfit: number | null;
   fetchedAt: string;
-  source: "spdb_wm" | "cmbcwm";
+  source: "spdb_wm" | "spdb_report" | "cmbcwm" | "cmb_cfweb" | "cib_pfund" | "citic_wealth";
 };
 
 export type DbShape = {

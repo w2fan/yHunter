@@ -133,6 +133,17 @@ async function fetchHoldingByCode(holding: Holding): Promise<ProductSnapshot | n
   return exact ? mapProduct(exact, capturedAt) : null;
 }
 
+export async function fetchProductByCode(productCode: string): Promise<ProductSnapshot | null> {
+  const capturedAt = new Date().toISOString();
+  const escapedCode = productCode.trim().replace(/'/g, "");
+  if (!escapedCode) return null;
+
+  const response = await invokeSpdbSearch(`ProductCode='%${escapedCode}%'`, 1, 20);
+  const rows = response.data?.content ?? [];
+  const exact = rows.find((row) => row.ProductCode?.trim() === escapedCode) ?? rows[0];
+  return exact ? mapProduct(exact, capturedAt) : null;
+}
+
 export async function fetchHoldingSnapshots(holdings: Holding[]): Promise<ProductSnapshot[]> {
   const results = await Promise.all(holdings.map((holding) => fetchHoldingByCode(holding)));
   return results.filter((item): item is ProductSnapshot => Boolean(item));

@@ -1,8 +1,20 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 import type { CandidateInsight, DashboardData, HoldingInsight } from "@/lib/types";
+
+type RefreshProgress = {
+  active: boolean;
+  stage: string;
+  detail: string | null;
+  currentManager: string | null;
+  currentProduct: string | null;
+  processed: number;
+  total: number;
+  startedAt: string | null;
+  updatedAt: string;
+};
 
 const signalText = {
   sell: "考虑卖出",
@@ -21,6 +33,10 @@ function formatDiff(value: number | null) {
   return `${prefix}${value.toFixed(2)} pct`;
 }
 
+function formatSampleCount(value: number) {
+  return `${value} 条`;
+}
+
 function signalBadge(signal: HoldingInsight["signal"]) {
   if (signal === "sell") return "badge badge-bad";
   if (signal === "watch") return "badge badge-warn";
@@ -33,11 +49,39 @@ function candidateBadge(stage: CandidateInsight["stage"]) {
   return "badge badge-warn";
 }
 
+function holdingFromCandidate(candidate: CandidateInsight, holding: HoldingInsight["holding"]): HoldingInsight {
+  const signal: HoldingInsight["signal"] =
+    candidate.stage === "fading" ? "watch" : candidate.stage === "mature" ? "hold" : "watch";
+
+  return {
+    holding,
+    latest: candidate.product,
+    latestHistory: candidate.latestHistory,
+    navHistory: candidate.navHistory,
+    performanceSamples: candidate.performanceSamples,
+    marketGap: candidate.marketPremium,
+    peakDrawdown: null,
+    sevenDayChange: candidate.recentChange,
+    recentAnnualized: candidate.recentAnnualized,
+    priorAnnualized: candidate.priorAnnualized,
+    acceleration: candidate.acceleration,
+    signal,
+    confidence: candidate.confidence,
+    reasons: [
+      "已从候选池加入持仓，沿用当前本地分析结果；下次刷新时会再补最新官方数据。",
+      ...candidate.reasons
+    ]
+  };
+}
+
 export default function HomePage() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshProgress, setRefreshProgress] = useState<RefreshProgress | null>(null);
+  const [showHoldingComposer, setShowHoldingComposer] = useState(false);
+  const progressTimerRef = useRef<number | null>(null);
   const [form, setForm] = useState({
     productCode: "",
     productName: "",
@@ -46,9 +90,32 @@ export default function HomePage() {
     note: ""
   });
 
+  function stopProgressPolling() {
+    if (progressTimerRef.current !== null) {
+      window.clearInterval(progressTimerRef.current);
+      progressTimerRef.current = null;
+    }
+  }
+
+  async function pollRefreshProgress() {
+    try {
+      const response = await fetch("/api/dashboard/progress", { cache: "no-store" });
+      if (!response.ok) return;
+      const data = (await response.json()) as RefreshProgress;
+      setRefreshProgress(data);
+    } catch {
+      // Ignore progress polling failures and let the main refresh result speak for itself.
+    }
+  }
+
   async function loadDashboard() {
     setLoading(true);
     setError(null);
+    await pollRefreshProgress();
+    stopProgressPolling();
+    progressTimerRef.current = window.setInterval(() => {
+      void pollRefreshProgress();
+    }, 1200);
     try {
       const response = await fetch("/api/dashboard", { cache: "no-store" });
       const data = await response.json();
@@ -56,9 +123,12 @@ export default function HomePage() {
         throw new Error(data.message || "刷新失败");
       }
       setDashboard(data);
+      await pollRefreshProgress();
     } catch (err) {
       setError(err instanceof Error ? err.message : "刷新失败");
+      await pollRefreshProgress();
     } finally {
+      stopProgressPolling();
       setLoading(false);
     }
   }
@@ -66,6 +136,15 @@ export default function HomePage() {
   useEffect(() => {
     loadDashboard();
   }, []);
+
+  useEffect(() => () => stopProgressPolling(), []);
+
+  useEffect(() => {
+    if (!dashboard) return;
+    if (!dashboard.holdings.length) {
+      setShowHoldingComposer(true);
+    }
+  }, [dashboard]);
 
   async function submitHolding(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -85,6 +164,46 @@ export default function HomePage() {
         throw new Error(data.message || "保存失败");
       }
 
+      const candidate = dashboard?.candidates.find((item) => item.product.productCode === data.productCode);
+      if (candidate) {
+        setDashboard((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            generatedAt: new Date().toISOString(),
+            holdings: [holdingFromCandidate(candidate, data), ...prev.holdings.filter((item) => item.holding.id !== data.id)],
+            candidates: prev.candidates.filter((item) => item.product.productCode !== data.productCode)
+          };
+        });
+      } else {
+        setDashboard((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            generatedAt: new Date().toISOString(),
+            holdings: [
+              {
+                holding: data,
+                latest: null,
+                latestHistory: [],
+                navHistory: [],
+                performanceSamples: 0,
+                marketGap: null,
+                peakDrawdown: null,
+                sevenDayChange: null,
+                recentAnnualized: null,
+                priorAnnualized: null,
+                acceleration: null,
+                signal: "insufficient_data",
+                confidence: "low",
+                reasons: ["已加入持仓，等待下次刷新补全最新官方快照和管理人历史。"]
+              },
+              ...prev.holdings.filter((item) => item.holding.id !== data.id)
+            ]
+          };
+        });
+      }
+
       setForm({
         productCode: "",
         productName: "",
@@ -92,7 +211,42 @@ export default function HomePage() {
         registrationCode: "",
         note: ""
       });
-      await loadDashboard();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "保存失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function addCandidateToHoldings(candidate: CandidateInsight) {
+    setSaving(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/holdings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          productCode: candidate.product.productCode,
+          productName: candidate.product.productName
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || "保存失败");
+      }
+
+      setDashboard((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          generatedAt: new Date().toISOString(),
+          holdings: [holdingFromCandidate(candidate, data), ...prev.holdings.filter((item) => item.holding.id !== data.id)],
+          candidates: prev.candidates.filter((item) => item.product.productCode !== data.productCode)
+        };
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存失败");
     } finally {
@@ -109,7 +263,14 @@ export default function HomePage() {
       if (!response.ok) {
         throw new Error(data.message || "删除失败");
       }
-      await loadDashboard();
+      setDashboard((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          generatedAt: new Date().toISOString(),
+          holdings: prev.holdings.filter((item) => item.holding.id !== id)
+        };
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "删除失败");
     } finally {
@@ -123,7 +284,7 @@ export default function HomePage() {
         <section className="hero">
           <h1>打榜理财猎手</h1>
           <p>
-            盯住浦发代销的日日丰、R1、人民币现金管理类理财，识别谁还在打榜、谁已经回归均值，并把候选池和你的持仓分开管理。
+            盯住浦发公告代销的日日丰、R1、人民币现金管理类理财，识别谁在打榜、谁回归了均值。
           </p>
           <div className="hero-toolbar">
             <div className="hero-meta">
@@ -134,6 +295,21 @@ export default function HomePage() {
               {loading ? "刷新中..." : "立即刷新官方数据"}
             </button>
           </div>
+          {loading || refreshProgress?.active ? (
+            <div className="refresh-status" aria-live="polite">
+              <div className="refresh-status-title">{refreshProgress?.detail || "正在刷新官方数据"}</div>
+              <div className="refresh-status-meta">
+                {refreshProgress?.currentProduct
+                  ? `当前产品：${refreshProgress.currentProduct}`
+                  : refreshProgress?.currentManager
+                    ? `当前来源：${refreshProgress.currentManager}`
+                    : "正在准备刷新任务"}
+                {refreshProgress && refreshProgress.total > 0
+                  ? ` · ${Math.min(refreshProgress.processed + (refreshProgress.active ? 1 : 0), refreshProgress.total)}/${refreshProgress.total}`
+                  : ""}
+              </div>
+            </div>
+          ) : null}
         </section>
 
         {error ? <div className="alert">{error}</div> : null}
@@ -142,9 +318,9 @@ export default function HomePage() {
           <div className="split-title">
             <div>
               <h2>市场概况</h2>
-              <p>只统计浦发官网中筛选出的 `日日丰 / R1低风险 / 人民币` 在售或停售产品。</p>
+              <p>只统计浦发官网中筛选出的 `日日丰 / R1低风险 / 人民币` 在售产品。</p>
             </div>
-            <div className="pill">
+            <div className="pill sync-pill">
               最近同步：{dashboard?.lastSyncedAt ? new Date(dashboard.lastSyncedAt).toLocaleString("zh-CN") : "--"}
             </div>
           </div>
@@ -173,62 +349,8 @@ export default function HomePage() {
             <div className="split-title">
               <div>
                 <h2>我的持仓</h2>
-                <p>一旦加入持仓，它就不会再出现在候选池里。</p>
               </div>
             </div>
-
-<form onSubmit={submitHolding} className="form-grid">
-              <div className="field">
-                <label htmlFor="productCode">产品代码</label>
-                <input
-                  id="productCode"
-                  value={form.productCode}
-                  onChange={(event) => setForm((prev) => ({ ...prev, productCode: event.target.value }))}
-                  placeholder="例如 2301259216"
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="productName">产品名称</label>
-                <input
-                  id="productName"
-                  value={form.productName}
-                  onChange={(event) => setForm((prev) => ({ ...prev, productName: event.target.value }))}
-                  placeholder="例如 天添盈增利51号A"
-                />
-              </div>
-              <div className="field field-wide">
-                <label htmlFor="managerProductCode">管理人产品代码</label>
-                <input
-                  id="managerProductCode"
-                  value={form.managerProductCode}
-                  onChange={(event) => setForm((prev) => ({ ...prev, managerProductCode: event.target.value }))}
-                  placeholder="可选，后续找到管理人或其他渠道的内部代码时填这里"
-                />
-              </div>
-              <div className="field field-wide">
-                <label htmlFor="registrationCode">理财登记编码</label>
-                <input
-                  id="registrationCode"
-                  value={form.registrationCode}
-                  onChange={(event) => setForm((prev) => ({ ...prev, registrationCode: event.target.value }))}
-                  placeholder="可选，例如在产品说明书里找到的全国银行业理财登记编码"
-                />
-              </div>
-              <div className="field field-wide">
-                <label htmlFor="note">备注</label>
-                <input
-                  id="note"
-                  value={form.note}
-                  onChange={(event) => setForm((prev) => ({ ...prev, note: event.target.value }))}
-                  placeholder="可选，比如买入原因、银行渠道、自己的关注点"
-                />
-              </div>
-              <div className="inline-actions">
-                <button className="button" type="submit" disabled={saving}>
-                  {saving ? "保存中..." : "加入持仓"}
-                </button>
-              </div>
-            </form>
 
             <div className="list">
               {dashboard?.holdings.length ? (
@@ -256,12 +378,24 @@ export default function HomePage() {
                         <div className="detail-value">{formatRate(item.latest?.incomeRate ?? null)}</div>
                       </div>
                       <div className="detail">
+                        <div className="detail-label">历史样本</div>
+                        <div className="detail-value">{formatSampleCount(item.performanceSamples)}</div>
+                      </div>
+                      <div className="detail">
                         <div className="detail-label">相对均值</div>
                         <div className="detail-value">{formatDiff(item.marketGap)}</div>
                       </div>
                       <div className="detail">
                         <div className="detail-label">7天变化</div>
                         <div className="detail-value">{formatDiff(item.sevenDayChange)}</div>
+                      </div>
+                      <div className="detail">
+                        <div className="detail-label">近期7日年化</div>
+                        <div className="detail-value">{formatRate(item.recentAnnualized)}</div>
+                      </div>
+                      <div className="detail">
+                        <div className="detail-label">短期动能</div>
+                        <div className="detail-value">{formatDiff(item.acceleration)}</div>
                       </div>
                       <div className="detail">
                         <div className="detail-label">距高点回落</div>
@@ -291,6 +425,42 @@ export default function HomePage() {
               ) : (
                 <div className="empty">还没有持仓。先录入产品代码和名称，系统就会开始跟踪它的官方收益快照。</div>
               )}
+
+              <div className="add-card">
+                <button
+                  className="add-toggle"
+                  type="button"
+                  onClick={() => setShowHoldingComposer((prev) => !prev)}
+                  aria-expanded={showHoldingComposer}
+                >
+                  <span>
+                    <strong>手动添加持仓</strong>
+                    <small>只填浦发产品代码，剩余信息由系统自动匹配</small>
+                  </span>
+                  <span className="add-toggle-icon">{showHoldingComposer ? "−" : "+"}</span>
+                </button>
+
+                {showHoldingComposer ? (
+                  <form onSubmit={submitHolding} className="composer-shell">
+                    <div className="form-grid form-grid-compact form-grid-single">
+                      <div className="field field-wide">
+                        <label htmlFor="productCode">浦发产品代码</label>
+                        <input
+                          id="productCode"
+                          value={form.productCode}
+                          onChange={(event) => setForm((prev) => ({ ...prev, productCode: event.target.value }))}
+                          placeholder="例如 2301259216"
+                        />
+                      </div>
+                    </div>
+                    <div className="inline-actions">
+                      <button className="button" type="submit" disabled={saving}>
+                        {saving ? "保存中..." : "保存并刷新"}
+                      </button>
+                    </div>
+                  </form>
+                ) : null}
+              </div>
             </div>
           </div>
 
@@ -298,7 +468,6 @@ export default function HomePage() {
             <div className="split-title">
               <div>
                 <h2>候选池</h2>
-                <p>越靠前表示越像“还在打榜且离起点不远”的产品。</p>
               </div>
             </div>
 
@@ -324,14 +493,19 @@ export default function HomePage() {
                       </div>
                     </div>
 
+                    <div className="score-strip">
+                      <div className="score-strip-label">候选得分</div>
+                      <div className="score-strip-value">{item.score.toFixed(1)}</div>
+                    </div>
+
                     <div className="detail-grid">
                       <div className="detail">
                         <div className="detail-label">当前收益</div>
                         <div className="detail-value">{formatRate(item.product.incomeRate)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">候选得分</div>
-                        <div className="detail-value">{item.score.toFixed(1)}</div>
+                        <div className="detail-label">历史样本</div>
+                        <div className="detail-value">{formatSampleCount(item.performanceSamples)}</div>
                       </div>
                       <div className="detail">
                         <div className="detail-label">相对中位溢价</div>
@@ -340,6 +514,14 @@ export default function HomePage() {
                       <div className="detail">
                         <div className="detail-label">近几日变化</div>
                         <div className="detail-value">{formatDiff(item.recentChange)}</div>
+                      </div>
+                      <div className="detail">
+                        <div className="detail-label">近期7日年化</div>
+                        <div className="detail-value">{formatRate(item.recentAnnualized)}</div>
+                      </div>
+                      <div className="detail">
+                        <div className="detail-label">短期动能</div>
+                        <div className="detail-value">{formatDiff(item.acceleration)}</div>
                       </div>
                     </div>
 
@@ -356,19 +538,8 @@ export default function HomePage() {
                     </ul>
 
                     <div className="inline-actions">
-                      <button
-                        className="ghost-button"
-                        onClick={() =>
-                          setForm((prev) => ({
-                            ...prev,
-                            productCode: item.product.productCode,
-                            productName: item.product.productName,
-                            managerProductCode: "",
-                            registrationCode: ""
-                          }))
-                        }
-                      >
-                        填入持仓表单
+                      <button className="ghost-button" onClick={() => addCandidateToHoldings(item)} disabled={saving}>
+                        加入持仓
                       </button>
                     </div>
                   </article>

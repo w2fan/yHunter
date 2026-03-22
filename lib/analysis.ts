@@ -261,8 +261,7 @@ function buildCandidateInsight(
     ? Math.max(
         0,
         (metrics.recentAnnualized ?? 0) * 0.5 +
-          (metrics.acceleration ?? 0) * 0.8 +
-          (metrics.recentPer10k ?? 0) * 6
+          (metrics.acceleration ?? 0) * 0.8
       )
     : 0;
   const score = premiumScore + freshnessScore + momentumScore + performanceScore;

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { fetchProductByCode } from "@/lib/spdb";
 import { addHolding, readDb } from "@/lib/store";
 
 export async function GET() {
@@ -17,13 +18,21 @@ export async function POST(request: Request) {
       note?: string;
     };
 
-    if (!body.productCode?.trim() || !body.productName?.trim()) {
-      return NextResponse.json({ message: "产品代码和名称都不能为空。" }, { status: 400 });
+    const productCode = body.productCode?.trim();
+    if (!productCode) {
+      return NextResponse.json({ message: "产品代码不能为空。" }, { status: 400 });
+    }
+
+    const matchedProduct = await fetchProductByCode(productCode);
+    const productName = body.productName?.trim() || matchedProduct?.productName;
+
+    if (!productName) {
+      return NextResponse.json({ message: "没找到这个浦发产品代码，请确认后再试。" }, { status: 404 });
     }
 
     const holding = await addHolding({
-      productCode: body.productCode,
-      productName: body.productName,
+      productCode,
+      productName,
       managerProductCode: body.managerProductCode,
       registrationCode: body.registrationCode,
       note: body.note

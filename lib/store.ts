@@ -3,7 +3,9 @@ import path from "node:path";
 
 import type { DbShape, Holding, ManagerNavPoint, ProductMapping, ProductSnapshot } from "@/lib/types";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_DIR = process.env.YHUNTER_DATA_DIR
+  ? path.resolve(process.env.YHUNTER_DATA_DIR)
+  : path.join(process.cwd(), "data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
 const defaultDb: DbShape = {

@@ -111,6 +111,19 @@ input {
 
 .pill {
   color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.hero-meta .pill {
+  padding: 7px 11px;
+  font-size: 0.78rem;
+  background: rgba(255, 255, 255, 0.48);
+  color: rgba(36, 25, 14, 0.72);
+}
+
+.sync-pill {
+  white-space: nowrap;
+  font-size: 0.88rem;
 }
 
 .button {
@@ -124,6 +137,26 @@ input {
 .button:disabled {
   cursor: not-allowed;
   opacity: 0.65;
+}
+
+.refresh-status {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.refresh-status-title {
+  font-size: 0.94rem;
+  font-weight: 700;
+}
+
+.refresh-status-meta {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
 }
 
 .section-grid {
@@ -176,6 +209,14 @@ input {
   margin-top: 16px;
 }
 
+.form-grid-compact {
+  margin-top: 0;
+}
+
+.form-grid-single {
+  grid-template-columns: 1fr;
+}
+
 .field {
   display: grid;
   gap: 8px;
@@ -221,6 +262,63 @@ input {
   gap: 12px;
 }
 
+.add-card {
+  border: 1px dashed rgba(187, 79, 17, 0.28);
+  border-radius: 20px;
+  background:
+    linear-gradient(135deg, rgba(255, 247, 235, 0.92), rgba(255, 252, 246, 0.76));
+  overflow: hidden;
+}
+
+.add-toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.add-toggle > span:first-of-type {
+  flex: 1 1 auto;
+}
+
+.add-toggle strong {
+  display: block;
+  font-size: 1rem;
+}
+
+.add-toggle small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.add-toggle-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: white;
+  background: linear-gradient(135deg, #c65112, #8a2d00);
+  box-shadow: 0 10px 20px rgba(138, 45, 0, 0.16);
+}
+
+.composer-shell {
+  border-top: 1px solid rgba(187, 79, 17, 0.12);
+  padding: 0 18px 18px;
+}
+
 .card {
   border: 1px solid var(--line);
   border-radius: 20px;
@@ -235,6 +333,11 @@ input {
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
+}
+
+.card-top > .badge {
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .card-title {
@@ -256,28 +359,55 @@ input {
 
 .badge {
   border-radius: 999px;
-  padding: 6px 10px;
-  font-size: 0.82rem;
+  padding: 8px 12px;
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
   border: 1px solid var(--line);
   background: white;
 }
 
 .badge-good {
-  color: var(--good);
-  background: rgba(21, 111, 61, 0.1);
-  border-color: rgba(21, 111, 61, 0.18);
+  color: white;
+  background: var(--good);
+  border-color: var(--good);
 }
 
 .badge-warn {
-  color: var(--warn);
-  background: rgba(165, 107, 0, 0.12);
-  border-color: rgba(165, 107, 0, 0.2);
+  color: white;
+  background: var(--warn);
+  border-color: var(--warn);
 }
 
 .badge-bad {
-  color: var(--bad);
-  background: rgba(179, 51, 29, 0.1);
-  border-color: rgba(179, 51, 29, 0.15);
+  color: white;
+  background: var(--bad);
+  border-color: var(--bad);
+}
+
+.score-strip {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(187, 79, 17, 0.16);
+  background: linear-gradient(135deg, rgba(255, 243, 225, 0.95), rgba(255, 249, 239, 0.92));
+}
+
+.score-strip-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.score-strip-value {
+  font-size: 1.8rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--accent);
 }
 
 .detail-grid {
@@ -290,6 +420,7 @@ input {
   padding: 12px;
   border-radius: 16px;
   background: rgba(244, 239, 229, 0.72);
+  min-width: 0;
 }
 
 .detail-label {
@@ -301,6 +432,8 @@ input {
   margin-top: 6px;
   font-size: 1rem;
   font-weight: 700;
+  line-height: 1.2;
+  word-break: break-word;
 }
 
 .reason-list {
@@ -341,10 +474,16 @@ input {
 
 @media (max-width: 960px) {
   .section-grid,
-  .stats-grid,
-  .detail-grid,
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .page-shell {
@@ -355,5 +494,143 @@ input {
   .panel {
     border-radius: 22px;
     padding: 18px;
+  }
+
+  .hero-toolbar {
+    align-items: stretch;
+  }
+
+  .hero-meta {
+    gap: 8px;
+  }
+
+  .hero-meta .pill {
+    padding: 6px 10px;
+    font-size: 0.76rem;
+  }
+
+  .split-title {
+    align-items: flex-start;
+  }
+
+  .sync-pill {
+    white-space: normal;
+    border-radius: 16px;
+    padding: 8px 12px;
+    font-size: 0.8rem;
+    line-height: 1.35;
+  }
+
+  .stat-card {
+    padding: 14px;
+  }
+
+  .stat-value {
+    font-size: 1.28rem;
+  }
+
+  .card {
+    padding: 16px;
+    gap: 10px;
+  }
+
+  .card-top {
+    gap: 10px;
+  }
+
+  .badge {
+    padding: 7px 11px;
+    font-size: 0.78rem;
+  }
+
+  .badge-row {
+    gap: 6px;
+  }
+
+  .score-strip {
+    padding: 12px 14px;
+  }
+
+  .score-strip-label {
+    font-size: 0.76rem;
+  }
+
+  .score-strip-value {
+    font-size: 1.45rem;
+  }
+
+  .detail {
+    padding: 10px;
+    border-radius: 14px;
+  }
+
+  .detail-label {
+    font-size: 0.73rem;
+  }
+
+  .detail-value {
+    margin-top: 4px;
+    font-size: 0.94rem;
+  }
+
+  .reason-list {
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
+}
+
+@media (max-width: 640px) {
+  .hero h1 {
+    font-size: 2.25rem;
+  }
+
+  .hero p {
+    font-size: 0.94rem;
+  }
+
+  .hero-toolbar {
+    margin-top: 18px;
+    gap: 10px;
+  }
+
+  .hero-meta {
+    width: 100%;
+  }
+
+  .hero-meta .pill {
+    border-radius: 14px;
+  }
+
+  .button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .split-title {
+    flex-direction: column;
+  }
+
+  .sync-pill {
+    width: 100%;
+  }
+
+  .stats-grid {
+    gap: 10px;
+  }
+
+  .card-top {
+    flex-direction: column;
+  }
+
+  .card-top > .badge {
+    align-self: flex-start;
+  }
+
+  .detail-grid {
+    gap: 8px;
+  }
+
+  .score-strip {
+    align-items: center;
   }
 }
