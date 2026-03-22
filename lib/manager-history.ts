@@ -300,6 +300,10 @@ async function cmbCfwebPost<T>(path: string, data: unknown = {}): Promise<T> {
   const stdout = await curlText(
     [
       "-s",
+      "--connect-timeout",
+      "8",
+      "--max-time",
+      "20",
       "-X",
       "POST",
       ...(await buildCmbCfwebHeaders()),
@@ -507,7 +511,7 @@ async function findRelatedSpdbProductCodes(product: ProductSnapshot): Promise<st
 }
 
 async function resolvePdfUrl(url: string): Promise<string | null> {
-  const html = await curlText(["-s", "-L", url]);
+  const html = await curlText(["-s", "--connect-timeout", "8", "--max-time", "20", "-L", url]);
   const match = html.match(/URL=([^"'>\s]+)/i);
   return match?.[1] ?? (url.toLowerCase().endsWith(".pdf") ? url : null);
 }
@@ -538,7 +542,7 @@ async function extractSpdbReportPoint(
     return null;
   }
 
-  const pdfBuffer = await spawnCurl(["-s", "-L", pdfUrl]);
+  const pdfBuffer = await spawnCurl(["-s", "--connect-timeout", "8", "--max-time", "25", "-L", pdfUrl]);
   const text = await parsePdfText(pdfBuffer);
   const periodMatch = text.match(/报告期（\s*(\d{4}-\d{2}-\d{2})\s*至\s*(\d{4}-\d{2}-\d{2})\s*）/u);
   const navDate = periodMatch?.[2] ?? formatDate(doc.productdate);

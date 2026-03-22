@@ -16,6 +16,15 @@ type RefreshProgress = {
   updatedAt: string;
 };
 
+function formatRefreshFailure(progress: RefreshProgress | null, fallback: string) {
+  const location = progress?.currentProduct
+    ? `${progress.currentManager ?? "管理人官网"} / ${progress.currentProduct}`
+    : progress?.currentManager ?? progress?.detail;
+
+  if (!location) return fallback;
+  return `${fallback}（卡在 ${location}）`;
+}
+
 const signalText = {
   sell: "考虑卖出",
   watch: "重点观察",
@@ -100,11 +109,13 @@ export default function HomePage() {
   async function pollRefreshProgress() {
     try {
       const response = await fetch("/api/dashboard/progress", { cache: "no-store" });
-      if (!response.ok) return;
+      if (!response.ok) return null;
       const data = (await response.json()) as RefreshProgress;
       setRefreshProgress(data);
+      return data;
     } catch {
       // Ignore progress polling failures and let the main refresh result speak for itself.
+      return null;
     }
   }
 
@@ -117,7 +128,10 @@ export default function HomePage() {
       void pollRefreshProgress();
     }, 1200);
     try {
-      const response = await fetch("/api/dashboard", { cache: "no-store" });
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 90000);
+      const response = await fetch("/api/dashboard", { cache: "no-store", signal: controller.signal });
+      window.clearTimeout(timeoutId);
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.message || "刷新失败");
@@ -125,8 +139,12 @@ export default function HomePage() {
       setDashboard(data);
       await pollRefreshProgress();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "刷新失败");
-      await pollRefreshProgress();
+      const latestProgress = await pollRefreshProgress();
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setError(formatRefreshFailure(latestProgress, "刷新超时"));
+      } else {
+        setError(formatRefreshFailure(latestProgress, err instanceof Error ? err.message : "刷新失败"));
+      }
     } finally {
       stopProgressPolling();
       setLoading(false);

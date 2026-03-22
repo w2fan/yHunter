@@ -52,6 +52,10 @@ async function spdbSearchDocuments(productCode: string): Promise<SpdbDocument[]>
 
   const stdout = await curlText([
     "-s",
+    "--connect-timeout",
+    "8",
+    "--max-time",
+    "20",
     "-k",
     "--tlsv1.2",
     "-X",
@@ -73,7 +77,7 @@ async function extractCodesFromPdf(url: string, productCode: string): Promise<Pr
     return null;
   }
 
-  const pdfBuffer = await curlBinary(["-s", "-L", pdfUrl]);
+  const pdfBuffer = await curlBinary(["-s", "--connect-timeout", "8", "--max-time", "25", "-L", pdfUrl]);
   const text = await parsePdfText(pdfBuffer);
   const registrationCode = normalizeRegistrationCode(text.match(/Z\d{10,}/)?.[0]);
   const managerCodeMatch =
@@ -93,7 +97,7 @@ async function extractCodesFromPdf(url: string, productCode: string): Promise<Pr
 }
 
 async function resolvePdfUrl(url: string): Promise<string | null> {
-  const html = await curlText(["-s", "-L", url]);
+  const html = await curlText(["-s", "--connect-timeout", "8", "--max-time", "20", "-L", url]);
   const refreshMatch = html.match(/URL=([^"'>\s]+)/i);
   return refreshMatch?.[1] ?? (url.toLowerCase().endsWith(".pdf") ? url : null);
 }

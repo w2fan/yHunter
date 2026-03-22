@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { buildDashboard } from "@/lib/analysis";
 import { fetchManagerHistory, hasManagerHistorySupport } from "@/lib/manager-history";
 import { enrichProductMappingsFromSpdb } from "@/lib/product-mapping";
-import { finishRefreshProgress, startRefreshProgress, updateRefreshProgress } from "@/lib/refresh-progress";
+import { finishRefreshProgress, getRefreshProgress, startRefreshProgress, updateRefreshProgress } from "@/lib/refresh-progress";
 import { fetchCashManagementProducts, fetchHoldingSnapshots } from "@/lib/spdb";
 import { mergeNavHistory, mergeProductMappings, mergeSnapshots, readDb, writeDb } from "@/lib/store";
 
@@ -138,8 +138,13 @@ export async function GET() {
     return NextResponse.json(dashboard);
   } catch (error) {
     console.error("[api/dashboard] refresh failed:", error);
-    finishRefreshProgress("failed", error instanceof Error ? error.message : "刷新失败");
-    const message = error instanceof Error ? error.message : "未知错误";
+    const progress = getRefreshProgress();
+    const baseMessage = error instanceof Error ? error.message : "未知错误";
+    const location = progress.currentProduct
+      ? `${progress.currentManager ?? "管理人官网"} / ${progress.currentProduct}`
+      : progress.currentManager ?? progress.detail;
+    const message = location ? `刷新失败：${baseMessage}（卡在 ${location}）` : `刷新失败：${baseMessage}`;
+    finishRefreshProgress("failed", message);
     return NextResponse.json({ message }, { status: 500 });
   }
 }
