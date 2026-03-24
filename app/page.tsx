@@ -46,6 +46,11 @@ function formatSampleCount(value: number) {
   return `${value} 条`;
 }
 
+function formatRefreshSummary(summary: DashboardData["lastRefreshSummary"]) {
+  if (!summary) return "官网抓取：--";
+  return `官网抓取：成功 ${summary.succeededProducts}/${summary.totalProducts}`;
+}
+
 function signalBadge(signal: HoldingInsight["signal"]) {
   if (signal === "sell") return "badge badge-bad";
   if (signal === "watch") return "badge badge-warn";
@@ -362,7 +367,12 @@ export default function HomePage() {
               <p>只统计浦发官网中筛选出的 `日日丰 / R1低风险 / 人民币` 在售产品。</p>
             </div>
             <div className="pill sync-pill">
-              最近同步：{dashboard?.lastSyncedAt ? new Date(dashboard.lastSyncedAt).toLocaleString("zh-CN") : "--"}
+              <span className="sync-pill-line">
+                最近同步：{dashboard?.lastSyncedAt ? new Date(dashboard.lastSyncedAt).toLocaleString("zh-CN") : "--"}
+              </span>
+              <span className="sync-pill-line sync-pill-subtle">
+                {formatRefreshSummary(dashboard?.lastRefreshSummary ?? null)}
+              </span>
             </div>
           </div>
           <div className="stats-grid" style={{ marginTop: 16 }}>

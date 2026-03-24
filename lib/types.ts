@@ -54,6 +54,12 @@ export type DbShape = {
   navHistory: ManagerNavPoint[];
   productMappings: Record<string, ProductMapping>;
   lastSyncedAt: string | null;
+  lastRefreshSummary: {
+    totalProducts: number;
+    succeededProducts: number;
+    failedProducts: number;
+    completedAt: string;
+  } | null;
 };
 
 export type HoldingInsight = {
@@ -93,6 +99,7 @@ export type CandidateInsight = {
 export type DashboardData = {
   generatedAt: string;
   lastSyncedAt: string | null;
+  lastRefreshSummary: DbShape["lastRefreshSummary"];
   marketSummary: {
     totalProducts: number;
     averageYield: number | null;

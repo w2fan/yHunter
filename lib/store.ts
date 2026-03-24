@@ -13,7 +13,8 @@ const defaultDb: DbShape = {
   snapshots: [],
   navHistory: [],
   productMappings: {},
-  lastSyncedAt: null
+  lastSyncedAt: null,
+  lastRefreshSummary: null
 };
 
 export async function readDb(): Promise<DbShape> {
@@ -36,7 +37,8 @@ export async function readDb(): Promise<DbShape> {
       snapshots: parsed.snapshots ?? [],
       navHistory: parsed.navHistory ?? [],
       productMappings,
-      lastSyncedAt: parsed.lastSyncedAt ?? null
+      lastSyncedAt: parsed.lastSyncedAt ?? null,
+      lastRefreshSummary: parsed.lastRefreshSummary ?? null
     };
   } catch {
     await writeDb(defaultDb);

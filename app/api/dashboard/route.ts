@@ -63,7 +63,10 @@ async function buildCachedDashboardResponse() {
   }
 
   const marketProducts = latestSnapshotsByCode(db).filter(isTargetCashProduct);
-  return buildDashboard(db, marketProducts);
+  return {
+    ...buildDashboard(db, marketProducts),
+    lastRefreshSummary: db.lastRefreshSummary
+  };
 }
 
 async function refreshDashboardResponse() {
@@ -147,7 +150,7 @@ async function refreshDashboardResponse() {
         processed: 0,
         total: managerTargets.length
       });
-      const { history, discoveredMappings } = await fetchManagerHistory(managerTargets, mergedDb.productMappings, {
+      const { history, discoveredMappings, summary } = await fetchManagerHistory(managerTargets, mergedDb.productMappings, {
         onProgress: ({ managerName, productName, processed, total }) => {
           updateRefreshProgress({
             stage: "manager_history",
@@ -172,10 +175,26 @@ async function refreshDashboardResponse() {
       });
       mergedDb = await mergeNavHistory(history);
       mergedDb.lastSyncedAt = syncedAt;
+      mergedDb.lastRefreshSummary = {
+        ...summary,
+        completedAt: syncedAt
+      };
+      await writeDb(mergedDb);
+    } else {
+      mergedDb.lastSyncedAt = syncedAt;
+      mergedDb.lastRefreshSummary = {
+        totalProducts: 0,
+        succeededProducts: 0,
+        failedProducts: 0,
+        completedAt: syncedAt
+      };
       await writeDb(mergedDb);
     }
 
-    const dashboard = buildDashboard(mergedDb, marketProducts);
+    const dashboard = {
+      ...buildDashboard(mergedDb, marketProducts),
+      lastRefreshSummary: mergedDb.lastRefreshSummary
+    };
     finishRefreshProgress("completed", "刷新完成");
     return NextResponse.json(dashboard);
   } catch (error) {

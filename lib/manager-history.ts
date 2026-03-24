@@ -1341,7 +1341,15 @@ export async function fetchManagerHistory(
   products: ProductSnapshot[],
   productMappings: Record<string, ProductMapping> = {},
   options: FetchManagerHistoryOptions = {}
-): Promise<{ history: ManagerNavPoint[]; discoveredMappings: Record<string, ProductMapping> }> {
+): Promise<{
+  history: ManagerNavPoint[];
+  discoveredMappings: Record<string, ProductMapping>;
+  summary: {
+    totalProducts: number;
+    succeededProducts: number;
+    failedProducts: number;
+  };
+}> {
   const expandedProducts = await expandProductsWithRelatedSpdbSeries(products);
   const uniqueProducts = expandedProducts.filter(
     (product, index, array) => array.findIndex((item) => item.productCode === product.productCode) === index
@@ -1389,6 +1397,11 @@ export async function fetchManagerHistory(
       chunks
         .filter((chunk) => chunk.result.mapping)
         .map((chunk) => [chunk.productCode, chunk.result.mapping as ProductMapping])
-    )
+    ),
+    summary: {
+      totalProducts: supported.length,
+      succeededProducts: chunks.filter((chunk) => chunk.result.history.length > 0 || chunk.result.mapping).length,
+      failedProducts: chunks.filter((chunk) => chunk.result.history.length === 0 && !chunk.result.mapping).length
+    }
   };
 }

@@ -122,8 +122,20 @@ input {
 }
 
 .sync-pill {
-  white-space: nowrap;
   font-size: 0.88rem;
+  display: grid;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.sync-pill-line {
+  display: block;
+  line-height: 1.35;
+}
+
+.sync-pill-subtle {
+  color: rgba(36, 25, 14, 0.68);
+  font-size: 0.8rem;
 }
 
 .button {
@@ -519,6 +531,7 @@ input {
     padding: 8px 12px;
     font-size: 0.8rem;
     line-height: 1.35;
+    min-width: 0;
   }
 
   .stat-card {

@@ -354,6 +354,7 @@ export function buildDashboard(db: DbShape, marketProducts: ProductSnapshot[]): 
   return {
     generatedAt: new Date().toISOString(),
     lastSyncedAt: db.lastSyncedAt,
+    lastRefreshSummary: db.lastRefreshSummary,
     marketSummary: {
       totalProducts: latestMarket.length,
       averageYield: round(marketAverage),
