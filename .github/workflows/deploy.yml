@@ -36,7 +36,21 @@ jobs:
             cd /opt/yHunter
             node -v
             npm -v
-            git pull
+
+            for attempt in 1 2 3; do
+              echo "git pull attempt ${attempt}..."
+              if git pull; then
+                break
+              fi
+
+              if [ "${attempt}" -eq 3 ]; then
+                echo "git pull failed after 3 attempts"
+                exit 1
+              fi
+
+              sleep 5
+            done
+
             npm install
             npm run build
             pm2 restart ecosystem.config.cjs --update-env
