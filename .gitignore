@@ -8,3 +8,4 @@ dashboard_response_*.json
 spdb_wm_nav2.json
 tsconfig.tsbuildinfo
 .DS_Store
+scripts/deploy.env

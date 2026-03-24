@@ -152,6 +152,100 @@ pm2 restart ecosystem.config.cjs --update-env
 pm2 save
 ```
 
+如果你想在本机一键部署，可以使用仓库自带脚本。
+
+### 本机一键部署
+
+先复制配置文件：
+
+```bash
+cp scripts/deploy.example.env scripts/deploy.env
+```
+
+按实际情况填写：
+
+```bash
+DEPLOY_HOST=your-server-ip
+DEPLOY_USER=root
+DEPLOY_PATH=/opt/yHunter
+```
+
+然后在本机执行：
+
+```bash
+./scripts/deploy.sh
+```
+
+脚本会自动完成：
+
+- SSH 登录服务器
+- `git pull`
+- `npm install`
+- `npm run build`
+- `pm2 restart ecosystem.config.cjs --update-env`
+- `pm2 save`
+
+## GitHub Actions 自动部署
+
+如果希望 `push 到 main` 后自动更新服务器，可以使用仓库自带工作流：
+
+`[deploy.yml](/Users/fan/Documents/project/yHunter/.github/workflows/deploy.yml)`
+
+### 需要配置的 GitHub Secrets
+
+在 GitHub 仓库：
+
+- `Settings`
+- `Secrets and variables`
+- `Actions`
+
+新增这些 secrets：
+
+- `DEPLOY_HOST`
+- `DEPLOY_USER`
+- `DEPLOY_SSH_KEY`
+- `DEPLOY_PORT`（可选，默认 `22`）
+
+推荐值：
+
+- `DEPLOY_HOST`: 服务器公网 IP
+- `DEPLOY_USER`: `root`
+- `DEPLOY_PORT`: `22`
+
+`DEPLOY_SSH_KEY` 需要填写“GitHub Actions 用来登录服务器”的私钥内容。
+
+### 服务器侧准备
+
+1. 在服务器上生成一把专门给 GitHub Actions 使用的 SSH key，或使用现有允许登录服务器的私钥对应公钥。
+2. 把公钥加入服务器用户的 `~/.ssh/authorized_keys`。
+3. 确保服务器上这些命令已经可用：
+
+```bash
+cd /opt/yHunter
+git pull
+npm install
+npm run build
+pm2 restart ecosystem.config.cjs --update-env
+pm2 save
+```
+
+### 工作流行为
+
+触发条件：
+
+- push 到 `main`
+- 手动点击 `Run workflow`
+
+执行内容：
+
+- SSH 登录服务器
+- 进入 `/opt/yHunter`
+- `git pull`
+- `npm install`
+- `npm run build`
+- `pm2 restart ecosystem.config.cjs --update-env`
+- `pm2 save`
+
 ## 常用运维命令
 
 ```bash
