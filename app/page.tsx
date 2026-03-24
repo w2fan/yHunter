@@ -86,6 +86,7 @@ function holdingFromCandidate(candidate: CandidateInsight, holding: HoldingInsig
 export default function HomePage() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshProgress, setRefreshProgress] = useState<RefreshProgress | null>(null);
@@ -122,15 +123,37 @@ export default function HomePage() {
   async function loadDashboard() {
     setLoading(true);
     setError(null);
+    try {
+      const response = await fetch("/api/dashboard", { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || "刷新失败");
+      }
+      setDashboard(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function refreshDashboard() {
+    setRefreshing(true);
+    setError(null);
     await pollRefreshProgress();
     stopProgressPolling();
     progressTimerRef.current = window.setInterval(() => {
       void pollRefreshProgress();
     }, 1200);
+
     try {
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), 90000);
-      const response = await fetch("/api/dashboard", { cache: "no-store", signal: controller.signal });
+      const response = await fetch("/api/dashboard", {
+        method: "POST",
+        cache: "no-store",
+        signal: controller.signal
+      });
       window.clearTimeout(timeoutId);
       const data = await response.json();
       if (!response.ok) {
@@ -147,7 +170,7 @@ export default function HomePage() {
       }
     } finally {
       stopProgressPolling();
-      setLoading(false);
+      setRefreshing(false);
     }
   }
 
@@ -309,11 +332,11 @@ export default function HomePage() {
               <span className="pill">默认卖出规则：回归均值 + 高位回落</span>
               <span className="pill">候选规则：收益溢价 + 新鲜度 + 动量</span>
             </div>
-            <button className="button" onClick={loadDashboard} disabled={loading || saving}>
-              {loading ? "刷新中..." : "立即刷新官方数据"}
+            <button className="button" onClick={refreshDashboard} disabled={loading || refreshing || saving}>
+              {refreshing ? "刷新中..." : "立即刷新官方数据"}
             </button>
           </div>
-          {loading || refreshProgress?.active ? (
+          {refreshing || refreshProgress?.active ? (
             <div className="refresh-status" aria-live="polite">
               <div className="refresh-status-title">{refreshProgress?.detail || "正在刷新官方数据"}</div>
               <div className="refresh-status-meta">

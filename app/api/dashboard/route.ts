@@ -6,34 +6,76 @@ import { enrichProductMappingsFromSpdb } from "@/lib/product-mapping";
 import { finishRefreshProgress, getRefreshProgress, startRefreshProgress, updateRefreshProgress } from "@/lib/refresh-progress";
 import { fetchCashManagementProducts, fetchHoldingSnapshots } from "@/lib/spdb";
 import { mergeNavHistory, mergeProductMappings, mergeSnapshots, readDb, writeDb } from "@/lib/store";
+import type { DbShape, ProductSnapshot } from "@/lib/types";
 
-export async function GET() {
+function isTargetCashProduct(product: ProductSnapshot): boolean {
+  return (
+    product.riskLevel.includes("R1") &&
+    product.currencyType.includes("人民币") &&
+    product.deadlineBrandId.includes("日") &&
+    product.deadlineBrandId.includes("丰") &&
+    product.productStatus === "在售"
+  );
+}
+
+function normalizeDashboardDb(db: DbShape): DbShape {
+  return {
+    ...db,
+    navHistory: db.navHistory
+      .map((point) => {
+        if (
+          point.source === "spdb_wm" &&
+          point.managerCode === "66" &&
+          point.annualizedYield !== null &&
+          point.annualizedYield < 0.1
+        ) {
+          return {
+            ...point,
+            annualizedYield: point.annualizedYield * 100
+          };
+        }
+
+        return point;
+      })
+      .filter((point) => point.annualizedYield !== null || point.per10kProfit !== null)
+  };
+}
+
+function latestSnapshotsByCode(db: DbShape): ProductSnapshot[] {
+  const latestByCode = new Map<string, ProductSnapshot>();
+
+  for (const snapshot of db.snapshots) {
+    const current = latestByCode.get(snapshot.productCode);
+    if (!current || current.capturedAt < snapshot.capturedAt) {
+      latestByCode.set(snapshot.productCode, snapshot);
+    }
+  }
+
+  return [...latestByCode.values()];
+}
+
+async function buildCachedDashboardResponse() {
+  const rawDb = await readDb();
+  const db = normalizeDashboardDb(rawDb);
+
+  if (db.navHistory.length !== rawDb.navHistory.length) {
+    await writeDb(db);
+  }
+
+  const marketProducts = latestSnapshotsByCode(db).filter(isTargetCashProduct);
+  return buildDashboard(db, marketProducts);
+}
+
+async function refreshDashboardResponse() {
   startRefreshProgress("starting", "准备刷新市场快照和管理人历史");
+
   try {
     const rawDb = await readDb();
-    const db = {
-      ...rawDb,
-      navHistory: rawDb.navHistory
-        .map((point) => {
-          if (
-            point.source === "spdb_wm" &&
-            point.managerCode === "66" &&
-            point.annualizedYield !== null &&
-            point.annualizedYield < 0.1
-          ) {
-            return {
-              ...point,
-              annualizedYield: point.annualizedYield * 100
-            };
-          }
-
-          return point;
-        })
-        .filter((point) => point.annualizedYield !== null || point.per10kProfit !== null)
-    };
+    const db = normalizeDashboardDb(rawDb);
     if (db.navHistory.length !== rawDb.navHistory.length) {
       await writeDb(db);
     }
+
     updateRefreshProgress({
       stage: "market_snapshot",
       detail: "正在刷新浦发市场快照",
@@ -147,4 +189,29 @@ export async function GET() {
     finishRefreshProgress("failed", message);
     return NextResponse.json({ message }, { status: 500 });
   }
+}
+
+export async function GET() {
+  try {
+    const dashboard = await buildCachedDashboardResponse();
+    return NextResponse.json(dashboard, {
+      headers: {
+        "Cache-Control": "no-store"
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "读取缓存失败";
+    return NextResponse.json({ message }, { status: 500 });
+  }
+}
+
+export async function POST() {
+  const progress = getRefreshProgress();
+  if (progress.active) {
+    const message = progress.currentProduct
+      ? `已有刷新任务进行中（当前：${progress.currentManager ?? "管理人官网"} / ${progress.currentProduct}）`
+      : "已有刷新任务进行中";
+    return NextResponse.json({ message }, { status: 409 });
+  }
+  return refreshDashboardResponse();
 }

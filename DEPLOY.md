@@ -246,6 +246,29 @@ pm2 save
 - `pm2 restart ecosystem.config.cjs --update-env`
 - `pm2 save`
 
+## GitHub Actions 定时刷新
+
+仓库还包含一个定时刷新工作流：
+
+`[refresh-nightly.yml](/Users/fan/Documents/project/yHunter/.github/workflows/refresh-nightly.yml)`
+
+触发方式：
+
+- 每天 `15:00 UTC`
+- 手动 `Run workflow`
+
+对中国时区来说，`15:00 UTC` 对应北京时间 `23:00`。
+
+工作流会通过 SSH 登录服务器，然后执行：
+
+```bash
+curl -X POST http://127.0.0.1:3000/api/dashboard
+```
+
+也就是触发一次“正式刷新”，效果和页面上的手动刷新按钮一致。
+
+如果刷新任务已经在进行中，接口会返回 `409`，避免并发跑两轮。
+
 ## 常用运维命令
 
 ```bash
