@@ -31,6 +31,8 @@ jobs:
               nvm use 22 >/dev/null
             fi
             export PATH="$HOME/.nvm/versions/node/v22.22.0/bin:$PATH"
+            echo "Deploying commit: ${{ github.sha }}"
+            echo "Target path: /opt/yHunter"
             cd /opt/yHunter
             node -v
             npm -v
@@ -39,3 +41,4 @@ jobs:
             npm run build
             pm2 restart ecosystem.config.cjs --update-env
             pm2 save
+            pm2 status
