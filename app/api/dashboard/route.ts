@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { buildDashboard } from "@/lib/analysis";
 import { fetchManagerHistory, hasManagerHistorySupport } from "@/lib/manager-history";
+import { supportsCmbCfwebCashHistory } from "@/lib/manager-support";
 import { enrichProductMappingsFromSpdb } from "@/lib/product-mapping";
 import { finishRefreshProgress, getRefreshProgress, startRefreshProgress, updateRefreshProgress } from "@/lib/refresh-progress";
 import { fetchCashManagementProducts, fetchHoldingSnapshots } from "@/lib/spdb";
@@ -133,7 +134,7 @@ async function refreshDashboardResponse() {
         .sort((left, right) => (right.incomeRate ?? -Infinity) - (left.incomeRate ?? -Infinity))
         .slice(0, 12),
       ...marketProducts
-        .filter((product) => product.taCode === "ZY" && /招赢日日金/u.test(product.productName))
+        .filter((product) => product.taCode === "ZY" && supportsCmbCfwebCashHistory(product.productName))
         .sort((left, right) => (right.incomeRate ?? -Infinity) - (left.incomeRate ?? -Infinity)),
       ...marketProducts
         .filter((product) => product.taCode === "ZX" && /日盈象天天利/u.test(product.productName))

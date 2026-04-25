@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { spawnCurl, spawnCurlText } from "@/lib/curl";
+import { parseCmbCfwebCashProduct, supportsCmbCfwebCashHistory } from "@/lib/manager-support";
 import { readDb } from "@/lib/store";
 import type { ManagerNavPoint, ProductMapping, ProductSnapshot } from "@/lib/types";
 
@@ -658,6 +659,46 @@ function buildCmbcwmSearchTerms(productName: string): string[] {
   return [...terms].filter((term) => term.length >= 4);
 }
 
+function extractTrailingShareClass(productName: string): string | null {
+  const normalized = productName.replace(/\s+/g, "").trim().toUpperCase();
+  const match = normalized.match(/([A-Z]+)$/u);
+  return match?.[1] ?? null;
+}
+
+function resolveCmbcwmProductRow(
+  rows: CmbcwmProductRow[],
+  product: ProductSnapshot
+): ResolvedManagerProduct | null {
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const targetName = normalizeCmbcwmName(product.productName);
+  const trailingShareClass = extractTrailingShareClass(product.productName);
+  const registrationCode = normalizeRegistrationCode(
+    rows.find((row) => normalizeCmbcwmName(row.PRD_NAME ?? "") === targetName)?.TBPRDEXTEND_DEBT_REGIST_CODE
+  );
+
+  const exact =
+    rows.find((row) => {
+      const rowName = normalizeCmbcwmName(row.PRD_NAME ?? "");
+      return rowName === targetName || rowName.includes(targetName) || targetName.includes(rowName);
+    }) ??
+    (trailingShareClass
+      ? rows.find((row) => (row.PRD_NAME ?? "").replace(/\s+/g, "").toUpperCase().endsWith(trailingShareClass))
+      : null);
+
+  if (exact?.REAL_PRD_CODE) {
+    return {
+      managerProductCode: exact.REAL_PRD_CODE,
+      registrationCode:
+        normalizeRegistrationCode(exact.TBPRDEXTEND_DEBT_REGIST_CODE) ?? registrationCode
+    };
+  }
+
+  return null;
+}
+
 function buildCmbCfwebFunCodeCandidates(product: ProductSnapshot, mapping?: ProductMapping): string[] {
   const candidates = new Set<string>();
   const mappedCode = mapping?.managerProductCode?.trim().toUpperCase();
@@ -665,16 +706,13 @@ function buildCmbCfwebFunCodeCandidates(product: ProductSnapshot, mapping?: Prod
     candidates.add(mappedCode);
   }
 
-  const match = product.productName
-    .replace(/\s+/g, "")
-    .match(/招赢日日金(\d+)号(?:现金管理类理财计划)?([A-Z]+)/u);
-
-  if (!match) {
+  const parsed = parseCmbCfwebCashProduct(product.productName);
+  if (!parsed?.seriesNumber || !parsed.shareClass) {
     return [...candidates];
   }
 
-  const [, seriesNumber, shareClassRaw] = match;
-  const shareClass = shareClassRaw.toUpperCase();
+  const { seriesNumber } = parsed;
+  const shareClass = parsed.shareClass.toUpperCase();
   const baseCode = `${seriesNumber.length >= 3 ? "8" : "88"}${seriesNumber}`;
 
   candidates.add(`${baseCode}${shareClass}`);
@@ -792,16 +830,21 @@ async function findCmbcwmRealProductCode(
   product: ProductSnapshot,
   mapping?: ProductMapping
 ): Promise<ResolvedManagerProduct | null> {
-  if (mapping?.managerProductCode) {
+  const mappedCode = mapping?.managerProductCode?.trim().toUpperCase();
+  const registrationCode = normalizeRegistrationCode(mapping?.registrationCode);
+  const trailingShareClass = extractTrailingShareClass(product.productName);
+
+  if (mappedCode && (!trailingShareClass || mappedCode.endsWith(trailingShareClass))) {
     return {
-      managerProductCode: mapping.managerProductCode,
-      registrationCode: normalizeRegistrationCode(mapping.registrationCode)
+      managerProductCode: mappedCode,
+      registrationCode
     };
   }
 
   const searchTerms = buildCmbcwmSearchTerms(product.productName);
-  const targetName = normalizeCmbcwmName(product.productName);
-  const productSuffix = product.productName.match(/(\d+号[A-Z])/u)?.[1]?.toUpperCase();
+  if (mappedCode) {
+    searchTerms.unshift(mappedCode);
+  }
 
   for (const term of searchTerms) {
     const response = await cmbcwmPost<{ list?: CmbcwmProductRow[] }>("BTAProductQry", {
@@ -813,26 +856,12 @@ async function findCmbcwmRealProductCode(
     const rows = response.list ?? [];
     if (rows.length === 0) continue;
 
-    const exact = rows.find((row) => {
-      const rowName = normalizeCmbcwmName(row.PRD_NAME ?? "");
-      return rowName === targetName || rowName.includes(targetName) || targetName.includes(rowName);
-    });
-
-    if (exact?.REAL_PRD_CODE) {
+    const resolved = resolveCmbcwmProductRow(rows, product);
+    if (resolved) {
       return {
-        managerProductCode: exact.REAL_PRD_CODE,
-        registrationCode: normalizeRegistrationCode(exact.TBPRDEXTEND_DEBT_REGIST_CODE)
+        ...resolved,
+        registrationCode: resolved.registrationCode ?? registrationCode
       };
-    }
-
-    if (productSuffix) {
-      const close = rows.find((row) => (row.PRD_NAME ?? "").toUpperCase().includes(productSuffix));
-      if (close?.REAL_PRD_CODE) {
-        return {
-          managerProductCode: close.REAL_PRD_CODE,
-          registrationCode: normalizeRegistrationCode(close.TBPRDEXTEND_DEBT_REGIST_CODE)
-        };
-      }
     }
   }
 
@@ -1077,7 +1106,7 @@ const cmbCfwebAdapter: ManagerHistoryAdapter = {
   key: "cmb_cfweb",
   managerName: "招银理财有限责任公司",
   supports(product) {
-    return product.taCode === "ZY" && /招赢日日金/u.test(product.productName);
+    return product.taCode === "ZY" && supportsCmbCfwebCashHistory(product.productName);
   },
   async fetchHistory(product, mapping) {
     const resolved = await findCmbCfwebPublicProduct(product, mapping);

@@ -151,6 +151,33 @@ input {
   opacity: 0.65;
 }
 
+.icon-button {
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.icon-button-svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .refresh-status {
   margin-top: 14px;
   padding: 12px 14px;
@@ -184,6 +211,13 @@ input {
   background: var(--panel);
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px);
+}
+
+.market-tools {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex: 0 0 auto;
 }
 
 .panel h2 {
@@ -484,6 +518,209 @@ input {
   border: 1px solid rgba(179, 51, 29, 0.15);
 }
 
+.yield-chart-shell {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(79, 59, 37, 0.1);
+  background: linear-gradient(180deg, rgba(249, 244, 235, 0.98), rgba(255, 255, 255, 0.88));
+}
+
+.yield-chart-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.yield-chart-title {
+  font-size: 0.94rem;
+  font-weight: 800;
+}
+
+.yield-chart-subtitle {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.yield-chart-note {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.84);
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.yield-chart-note-good {
+  color: var(--good);
+  border-color: rgba(21, 111, 61, 0.18);
+  background: rgba(21, 111, 61, 0.08);
+}
+
+.yield-chart-note-warn {
+  color: var(--warn);
+  border-color: rgba(165, 107, 0, 0.18);
+  background: rgba(165, 107, 0, 0.08);
+}
+
+.yield-chart-note-bad {
+  color: var(--bad);
+  border-color: rgba(179, 51, 29, 0.18);
+  background: rgba(179, 51, 29, 0.08);
+}
+
+.yield-chart-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.yield-chart-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.yield-chart-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+}
+
+.yield-chart-dot-snapshot {
+  background: #c65112;
+}
+
+.yield-chart-dot-nav {
+  background: #1d7d63;
+}
+
+.yield-chart-frame {
+  border-radius: 16px;
+  border: 1px solid rgba(79, 59, 37, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 251, 245, 0.96), rgba(248, 241, 231, 0.7));
+  overflow: hidden;
+}
+
+.yield-chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.yield-chart-gridline {
+  stroke: rgba(79, 59, 37, 0.12);
+  stroke-width: 1;
+}
+
+.yield-chart-axis {
+  fill: rgba(116, 101, 86, 0.92);
+  font-size: 11px;
+}
+
+.yield-chart-line {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.yield-chart-line-snapshot {
+  stroke: #c65112;
+}
+
+.yield-chart-line-nav {
+  stroke: #1d7d63;
+}
+
+.yield-chart-point {
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 1.5;
+}
+
+.yield-chart-point-snapshot {
+  fill: #c65112;
+}
+
+.yield-chart-point-nav {
+  fill: #1d7d63;
+}
+
+.yield-chart-focus-line {
+  stroke: rgba(79, 59, 37, 0.22);
+  stroke-width: 1.2;
+  stroke-dasharray: 4 4;
+}
+
+.yield-chart-focus-point {
+  stroke: white;
+  stroke-width: 2.5;
+  filter: drop-shadow(0 2px 4px rgba(36, 25, 14, 0.2));
+}
+
+.yield-chart-focus-point-snapshot {
+  fill: #c65112;
+}
+
+.yield-chart-focus-point-nav {
+  fill: #1d7d63;
+}
+
+.yield-chart-tooltip rect {
+  fill: rgba(255, 253, 248, 0.96);
+  stroke: rgba(79, 59, 37, 0.14);
+  filter: drop-shadow(0 10px 18px rgba(64, 40, 12, 0.16));
+}
+
+.yield-chart-tooltip text {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.yield-chart-tooltip-date {
+  fill: var(--text);
+}
+
+.yield-chart-tooltip-snapshot {
+  fill: #c65112;
+}
+
+.yield-chart-tooltip-nav {
+  fill: #1d7d63;
+}
+
+.yield-chart-hit-area {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+.yield-chart-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.yield-chart-summary span,
+.yield-chart-empty {
+  border-radius: 14px;
+  padding: 9px 11px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(79, 59, 37, 0.08);
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
 @media (max-width: 960px) {
   .section-grid,
   .form-grid {
@@ -590,6 +827,16 @@ input {
     font-size: 0.9rem;
     line-height: 1.45;
   }
+
+  .yield-chart-shell {
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .yield-chart-summary span,
+  .yield-chart-empty {
+    font-size: 0.79rem;
+  }
 }
 
 @media (max-width: 640px) {
@@ -645,5 +892,13 @@ input {
 
   .score-strip {
     align-items: center;
+  }
+
+  .yield-chart-header {
+    flex-direction: column;
+  }
+
+  .yield-chart-note {
+    white-space: normal;
   }
 }

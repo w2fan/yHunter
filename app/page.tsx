@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 
+import { YieldHistoryChart } from "@/components/yield-history-chart";
 import type { CandidateInsight, DashboardData, HoldingInsight } from "@/lib/types";
 
 type RefreshProgress = {
@@ -26,10 +27,10 @@ function formatRefreshFailure(progress: RefreshProgress | null, fallback: string
 }
 
 const signalText = {
-  sell: "考虑卖出",
+  sell: "建议卖出",
   watch: "重点观察",
   hold: "继续持有",
-  insufficient_data: "数据不足"
+  insufficient_data: "先补数据"
 } as const;
 
 function formatRate(value: number | null) {
@@ -46,6 +47,8 @@ function formatSampleCount(value: number) {
   return `${value} 条`;
 }
 
+const REFRESH_TIMEOUT_MS = 5 * 60 * 1000;
+
 function formatRefreshSummary(summary: DashboardData["lastRefreshSummary"]) {
   if (!summary) return "官网抓取：--";
   return `官网抓取：成功 ${summary.succeededProducts}/${summary.totalProducts}`;
@@ -57,10 +60,54 @@ function signalBadge(signal: HoldingInsight["signal"]) {
   return "badge badge-good";
 }
 
+function holdingActionHint(signal: HoldingInsight["signal"], confidence: HoldingInsight["confidence"]) {
+  if (signal === "sell") {
+    return confidence === "high" ? "直接调仓" : "尽快调仓";
+  }
+  if (signal === "watch") {
+    return confidence === "high" ? "先重点盯盘" : "继续补样本";
+  }
+  if (signal === "hold") {
+    return confidence === "high" ? "暂不急着动" : "可继续持有但多看两次刷新";
+  }
+  return "先别急着下结论";
+}
+
 function candidateBadge(stage: CandidateInsight["stage"]) {
   if (stage === "fresh_spike") return "badge badge-good";
   if (stage === "fading") return "badge badge-bad";
   return "badge badge-warn";
+}
+
+function candidateStageLabel(stage: CandidateInsight["stage"]) {
+  if (stage === "fresh_spike") return "正在打榜";
+  if (stage === "mature") return "高位稳定";
+  if (stage === "fading") return "疑似退潮";
+  return "继续观察";
+}
+
+function candidateActionHint(stage: CandidateInsight["stage"], confidence: CandidateInsight["confidence"]) {
+  if (stage === "fresh_spike") {
+    return confidence === "high" ? "可优先跟进" : "先小仓观察";
+  }
+  if (stage === "mature") {
+    return confidence === "high" ? "可重点比较" : "有吸引力但先确认";
+  }
+  if (stage === "fading") {
+    return "别急着追高";
+  }
+  return confidence === "low" ? "先等更多样本" : "继续观察";
+}
+
+function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="icon-button-svg">
+      <path d="M20 11a8 8 0 0 0-14.2-5" />
+      <path d="M6 3v5h5" />
+      <path d="M4 13a8 8 0 0 0 14.2 5" />
+      <path d="M18 21v-5h-5" />
+    </svg>
+  );
 }
 
 function holdingFromCandidate(candidate: CandidateInsight, holding: HoldingInsight["holding"]): HoldingInsight {
@@ -151,15 +198,15 @@ export default function HomePage() {
       void pollRefreshProgress();
     }, 1200);
 
+    let timeoutId: number | null = null;
     try {
       const controller = new AbortController();
-      const timeoutId = window.setTimeout(() => controller.abort(), 90000);
+      timeoutId = window.setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS);
       const response = await fetch("/api/dashboard", {
         method: "POST",
         cache: "no-store",
         signal: controller.signal
       });
-      window.clearTimeout(timeoutId);
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.message || "刷新失败");
@@ -174,6 +221,9 @@ export default function HomePage() {
         setError(formatRefreshFailure(latestProgress, err instanceof Error ? err.message : "刷新失败"));
       }
     } finally {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
       stopProgressPolling();
       setRefreshing(false);
     }
@@ -337,9 +387,6 @@ export default function HomePage() {
               <span className="pill">默认卖出规则：回归均值 + 高位回落</span>
               <span className="pill">候选规则：收益溢价 + 新鲜度 + 动量</span>
             </div>
-            <button className="button" onClick={refreshDashboard} disabled={loading || refreshing || saving}>
-              {refreshing ? "刷新中..." : "立即刷新官方数据"}
-            </button>
           </div>
           {refreshing || refreshProgress?.active ? (
             <div className="refresh-status" aria-live="polite">
@@ -360,19 +407,30 @@ export default function HomePage() {
 
         {error ? <div className="alert">{error}</div> : null}
 
-        <section className="panel">
+        <section className="panel market-panel">
           <div className="split-title">
             <div>
               <h2>市场概况</h2>
               <p>只统计浦发官网中筛选出的 `日日丰 / R1低风险 / 人民币` 在售产品。</p>
             </div>
-            <div className="pill sync-pill">
-              <span className="sync-pill-line">
-                最近同步：{dashboard?.lastSyncedAt ? new Date(dashboard.lastSyncedAt).toLocaleString("zh-CN") : "--"}
-              </span>
-              <span className="sync-pill-line sync-pill-subtle">
-                {formatRefreshSummary(dashboard?.lastRefreshSummary ?? null)}
-              </span>
+            <div className="market-tools">
+              <div className="pill sync-pill">
+                <span className="sync-pill-line">
+                  最近同步：{dashboard?.lastSyncedAt ? new Date(dashboard.lastSyncedAt).toLocaleString("zh-CN") : "--"}
+                </span>
+                <span className="sync-pill-line sync-pill-subtle">
+                  {formatRefreshSummary(dashboard?.lastRefreshSummary ?? null)}
+                </span>
+              </div>
+              <button
+                className="icon-button"
+                onClick={refreshDashboard}
+                disabled={loading || refreshing || saving}
+                aria-label="刷新官方数据"
+                title="刷新官方数据"
+              >
+                <RefreshIcon />
+              </button>
             </div>
           </div>
           <div className="stats-grid" style={{ marginTop: 16 }}>
@@ -455,10 +513,19 @@ export default function HomePage() {
                     </div>
 
                     <div className="badge-row">
-                      <span className="badge">{item.latest?.incomeRateLabel || "收益标签待获取"}</span>
                       <span className="badge">置信度 {item.confidence}</span>
-                      {item.latest?.productStatus ? <span className="badge">{item.latest.productStatus}</span> : null}
+                      <span className="badge">{holdingActionHint(item.signal, item.confidence)}</span>
                     </div>
+
+                    <YieldHistoryChart
+                      latestHistory={item.latestHistory}
+                      navHistory={item.navHistory}
+                      recommendationLabel={`${signalText[item.signal]} · ${item.confidence}`}
+                      recommendationHint={holdingActionHint(item.signal, item.confidence)}
+                      recommendationTone={
+                        item.signal === "sell" ? "bad" : item.signal === "watch" ? "warn" : item.signal === "hold" ? "good" : "neutral"
+                      }
+                    />
 
                     <ul className="reason-list">
                       {item.reasons.map((reason) => (
@@ -534,13 +601,7 @@ export default function HomePage() {
                         </div>
                       </div>
                       <div className={candidateBadge(item.stage)}>
-                        {item.stage === "fresh_spike"
-                          ? "新近打榜"
-                          : item.stage === "warming_up"
-                            ? "升温中"
-                            : item.stage === "mature"
-                              ? "已进入强势期"
-                              : "疑似退潮"}
+                        {candidateStageLabel(item.stage)}
                       </div>
                     </div>
 
@@ -577,10 +638,17 @@ export default function HomePage() {
                     </div>
 
                     <div className="badge-row">
-                      <span className="badge">{item.product.incomeRateLabel}</span>
-                      <span className="badge">{item.product.deadlineBrandId || "日日丰"}</span>
                       <span className="badge">置信度 {item.confidence}</span>
+                      <span className="badge">{candidateActionHint(item.stage, item.confidence)}</span>
                     </div>
+
+                    <YieldHistoryChart
+                      latestHistory={item.latestHistory}
+                      navHistory={item.navHistory}
+                      recommendationLabel={`${candidateStageLabel(item.stage)} · ${item.confidence}`}
+                      recommendationHint={candidateActionHint(item.stage, item.confidence)}
+                      recommendationTone={item.stage === "fresh_spike" ? "good" : item.stage === "fading" ? "bad" : "warn"}
+                    />
 
                     <ul className="reason-list">
                       {item.reasons.map((reason) => (

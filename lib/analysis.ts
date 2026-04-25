@@ -7,10 +7,21 @@ import type {
   ManagerNavPoint,
   ProductSnapshot
 } from "@/lib/types";
+import { supportsCmbCfwebCashHistory } from "@/lib/manager-support";
 
 function round(value: number | null, digits = 2): number | null {
   if (value === null || !Number.isFinite(value)) return null;
   return Number(value.toFixed(digits));
+}
+
+function expectsManagerHistory(product: ProductSnapshot): boolean {
+  return (
+    product.taCode === "66" ||
+    product.taCode === "MS" ||
+    (product.taCode === "ZY" && supportsCmbCfwebCashHistory(product.productName)) ||
+    (product.taCode === "EW" && /阳光碧乐活/u.test(product.productName)) ||
+    (product.taCode === "ZX" && /日盈象天天利/u.test(product.productName))
+  );
 }
 
 function average(values: number[]): number | null {
@@ -144,37 +155,20 @@ function buildHoldingInsight(holding: Holding, db: DbShape, marketBaseline: numb
 
   if (!latest || rate === null) {
     signal = "insufficient_data";
+    reasons.push("当前样本还不够判断去留，先别因为一次榜单波动就调仓。");
     reasons.push("暂未抓到这只持仓的最新收益快照，先不要依据当前结果调仓。");
     confidence = "low";
   } else {
-    if (!hasShortPerformanceTrend) {
-      reasons.push("管理人官网的 7 日年化和万份收益历史样本还不够，当前判断以浦发列表快照为主，只适合先观察。");
-    }
-    if (marketGap !== null && marketGap <= 0.1) {
-      reasons.push("当前收益已经接近或低于市场平均水平。");
-    }
-    if (snapshotDrawdown !== null && snapshotDrawdown >= 0.3) {
-      reasons.push("相对近期收益高点已经出现明显回落。");
-    }
-    if (sevenDayChange !== null && sevenDayChange <= -0.12) {
-      reasons.push("最近 7 天列表收益快照下滑较快。");
-    }
-    if (metrics.recentAnnualized !== null) {
-      reasons.push(`最近 3 个观测点的 7 日年化均值约 ${round(metrics.recentAnnualized)}%。`);
-    }
-    if (metrics.recentPer10k !== null) {
-      reasons.push(`最近 3 个观测点的万份收益均值约 ${round(metrics.recentPer10k, 4)}。`);
-    }
-    if (metrics.acceleration !== null && metrics.acceleration < 0) {
-      reasons.push("短期 7 日年化较上一阶段转弱。");
-    }
-    if (metrics.per10kAcceleration !== null && metrics.per10kAcceleration < 0) {
-      reasons.push("万份收益较上一阶段回落。");
-    }
+    const confirmedPerformancePullback =
+      hasReliablePerformanceTrend &&
+      ((metrics.drawdown !== null && metrics.drawdown >= 0.3) ||
+        (metrics.acceleration !== null && metrics.acceleration <= -0.3) ||
+        (metrics.per10kAcceleration !== null && metrics.per10kAcceleration < -0.04));
 
     const sellLike =
       hasReliablePerformanceTrend &&
-      ((marketGap !== null &&
+      (confirmedPerformancePullback ||
+        (marketGap !== null &&
         marketGap <= 0.08 &&
         metrics.recentAnnualized !== null &&
         marketBaseline !== null &&
@@ -202,6 +196,39 @@ function buildHoldingInsight(holding: Holding, db: DbShape, marketBaseline: numb
       signal = "watch";
     } else {
       signal = "hold";
+    }
+
+    if (signal === "sell") {
+      reasons.push("当前已经确认从高位回落，短期重新冲回打榜强势区的概率不高，建议直接换到更强的产品。");
+    } else if (signal === "watch") {
+      reasons.push("当前还没弱到必须卖，但已有走弱迹象，接下来几次刷新要重点盯。");
+    } else {
+      reasons.push("当前收益和动能还没出现明确走弱，暂时没必要急着动这只持仓。");
+    }
+
+    if (!hasShortPerformanceTrend) {
+      reasons.push("管理人官网的 7 日年化和万份收益历史样本还不够，当前判断以浦发列表快照为主，只适合先观察。");
+    }
+    if (marketGap !== null && marketGap <= 0.1) {
+      reasons.push("当前收益已经接近或低于市场平均水平。");
+    }
+    if (snapshotDrawdown !== null && snapshotDrawdown >= 0.3) {
+      reasons.push("相对近期收益高点已经出现明显回落。");
+    }
+    if (sevenDayChange !== null && sevenDayChange <= -0.12) {
+      reasons.push("最近 7 天列表收益快照下滑较快。");
+    }
+    if (metrics.recentAnnualized !== null) {
+      reasons.push(`最近 3 个观测点的 7 日年化均值约 ${round(metrics.recentAnnualized)}%。`);
+    }
+    if (metrics.recentPer10k !== null) {
+      reasons.push(`最近 3 个观测点的万份收益均值约 ${round(metrics.recentPer10k, 4)}。`);
+    }
+    if (metrics.acceleration !== null && metrics.acceleration < 0) {
+      reasons.push("短期 7 日年化较上一阶段转弱。");
+    }
+    if (metrics.per10kAcceleration !== null && metrics.per10kAcceleration < 0) {
+      reasons.push("万份收益较上一阶段回落。");
     }
 
     if (reasons.length === 0) {
@@ -238,6 +265,7 @@ function buildCandidateInsight(
   const performanceSamples = performanceHistory.length;
   const hasShortPerformanceTrend = performanceSamples >= 3;
   const hasReliablePerformanceTrend = performanceSamples >= 5;
+  const shouldHaveManagerHistory = expectsManagerHistory(product);
   const currentRate = product.incomeRate;
   const firstSeenAt = snapshotHistory[0]?.capturedAt ?? null;
   const recentBase = findPastRate(snapshotHistory, 3);
@@ -264,29 +292,59 @@ function buildCandidateInsight(
           (metrics.acceleration ?? 0) * 0.8
       )
     : 0;
-  const score = premiumScore + freshnessScore + momentumScore + performanceScore;
+  const historyPenalty =
+    performanceSamples >= 3
+      ? 0
+      : shouldHaveManagerHistory
+        ? performanceSamples === 0
+          ? 60
+          : 32
+        : performanceSamples === 0
+          ? 24
+          : 12;
+  const score = premiumScore + freshnessScore + momentumScore + performanceScore - historyPenalty;
 
   let stage: CandidateInsight["stage"] = "warming_up";
   if (hasShortPerformanceTrend) {
-    if (
+    const premium = marketPremium ?? 0;
+    const recentAnnualized = metrics.recentAnnualized ?? 0;
+    const acceleration = metrics.acceleration ?? 0;
+    const change = recentChange ?? 0;
+    const clearlyAhead =
+      premium >= 0.6 || recentAnnualized >= ((marketAverage ?? 0) + 0.35);
+    const stillRunningHot =
+      change >= 0.12 || acceleration >= 0.08;
+    const trulyCooling =
       hasReliablePerformanceTrend &&
-      (metrics.recentAnnualized ?? 0) >= ((marketAverage ?? 0) + 0.25) &&
-      (metrics.acceleration ?? 0) > 0.08
-    ) {
+      acceleration < -0.12 &&
+      change <= 0 &&
+      premium < 0.45;
+
+    if (hasReliablePerformanceTrend && clearlyAhead && stillRunningHot) {
       stage = "fresh_spike";
-    } else if (hasReliablePerformanceTrend && (metrics.acceleration ?? 0) < -0.08) {
+    } else if (trulyCooling) {
       stage = "fading";
-    } else if (
-      (marketPremium ?? 0) >= 0.4 ||
-      (metrics.recentAnnualized ?? 0) >= ((marketAverage ?? 0) + 0.4)
-    ) {
+    } else if (clearlyAhead) {
       stage = "mature";
     }
   }
 
   const reasons: string[] = [];
+  if (stage === "fresh_spike") {
+    reasons.push("当前仍处在强势冲榜区间，适合优先放进对比名单。");
+  } else if (stage === "mature") {
+    reasons.push("当前处在高位稳定区间，吸引力还在，但更适合和同梯队产品横向比较。");
+  } else if (stage === "fading") {
+    reasons.push("短期热度开始回落，先别因为榜单位置靠前就直接追进去。");
+  } else {
+    reasons.push("当前还在观察期，先看后续几次刷新能不能继续走强。");
+  }
   if (!hasShortPerformanceTrend) {
-    reasons.push("管理人官网的 7 日年化和万份收益历史样本还不够，当前候选排序主要参考浦发列表快照。");
+    reasons.push(
+      shouldHaveManagerHistory
+        ? "这类产品理论上应该能抓到官网历史，但当前样本还不够，已在排序里额外降权，先别只看浦发快照就追高。"
+        : "管理人官网历史样本还不够，当前候选排序主要参考浦发列表快照，可信度会低一些。"
+    );
   }
   if (marketPremium !== null) {
     reasons.push(`相对池内中位收益溢价 ${round(marketPremium)} 个百分点。`);
@@ -304,10 +362,10 @@ function buildCandidateInsight(
   }
   if (metrics.acceleration !== null) {
     reasons.push(
-      metrics.acceleration >= 0 ? "短期 7 日年化动能在增强。" : "短期 7 日年化动能已经回落，注意别追在尾声。"
+      metrics.acceleration >= 0 ? "短期 7 日年化动能在增强。" : "短期 7 日年化动能较前一阶段回落。"
     );
   } else if (recentChange !== null) {
-    reasons.push(recentChange >= 0 ? "最近几次收益快照仍在走强。" : "最近几次收益快照已经回落。");
+    reasons.push(recentChange >= 0 ? "最近几次收益快照仍在走强。" : "最近几次收益快照较前几日回落。");
   } else {
     reasons.push("历史样本还少，当前判断更多依赖横向比较。");
   }
@@ -322,7 +380,16 @@ function buildCandidateInsight(
     performanceSamples,
     score: round(score) ?? 0,
     stage,
-    confidence: hasReliablePerformanceTrend ? "high" : hasShortPerformanceTrend || snapshotHistory.length >= 2 ? "medium" : "low",
+    confidence:
+      hasReliablePerformanceTrend
+        ? "high"
+        : hasShortPerformanceTrend
+          ? "medium"
+          : shouldHaveManagerHistory
+            ? "low"
+            : snapshotHistory.length >= 2
+              ? "medium"
+              : "low",
     reasons,
     marketPremium: round(marketPremium),
     recentChange: round(recentChange),
