@@ -16,6 +16,9 @@
 - `data/db.json` 只作为本地开发样例和本地刷新缓存使用。
 - 服务器真实运行数据在 `/var/lib/yhunter/db.json`，部署时不会从 Git 覆盖。
 - 本地执行刷新后如果 `data/db.json` 出现变更，默认不要提交到 GitHub，除非明确要更新仓库里的样例数据。
+- 新开的 Codex/自动化进程开始修改前必须先读根目录 `AGENTS.md`。
+- 提交前必须检查 `git status --short` 和 `git diff --cached --name-only`。如果 `data/db.json` 被暂存，而本次任务没有明确要求更新样例数据，必须取消暂存并恢复为仓库样例版本后再提交。
+- 如果只是为了本地页面或接口验证刷了数据，可以在本机对 `data/db.json` 使用 `git update-index --skip-worktree data/db.json` 降低误提交风险；这只是本机保护，不代表可以把刷新数据推到远端。
 
 ## 首次部署
 
