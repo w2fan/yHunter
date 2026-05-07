@@ -212,24 +212,26 @@ export async function mergeProductMappings(nextMappings: Record<string, ProductM
 
 export async function mergeNavHistory(nextHistory: ManagerNavPoint[]): Promise<DbShape> {
   const db = await readDb();
-  const seen = new Set(
-    db.navHistory.map(
-      (item) =>
-        `${item.source}:${item.productCode}:${item.navDate}:${item.annualizedYield ?? "null"}:${item.per10kProfit ?? "null"}:${item.nav ?? "null"}:${item.totalNav ?? "null"}`
-    )
-  );
+  const latestByDate = new Map<string, ManagerNavPoint>();
+
+  for (const point of db.navHistory) {
+    latestByDate.set(`${point.source}:${point.productCode}:${point.navDate}`, point);
+  }
 
   for (const point of nextHistory) {
-    const key =
-      `${point.source}:${point.productCode}:${point.navDate}:` +
-      `${point.annualizedYield ?? "null"}:${point.per10kProfit ?? "null"}:` +
-      `${point.nav ?? "null"}:${point.totalNav ?? "null"}`;
-    if (!seen.has(key)) {
-      db.navHistory.push(point);
-      seen.add(key);
+    const key = `${point.source}:${point.productCode}:${point.navDate}`;
+    const current = latestByDate.get(key);
+    if (!current || current.fetchedAt <= point.fetchedAt) {
+      latestByDate.set(key, point);
     }
   }
 
+  db.navHistory = [...latestByDate.values()].sort(
+    (a, b) =>
+      a.productCode.localeCompare(b.productCode) ||
+      a.source.localeCompare(b.source) ||
+      a.navDate.localeCompare(b.navDate)
+  );
   await writeDb(db);
   return db;
 }

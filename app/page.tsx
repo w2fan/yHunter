@@ -47,7 +47,7 @@ function formatSampleCount(value: number) {
   return `${value} 条`;
 }
 
-const REFRESH_TIMEOUT_MS = 5 * 60 * 1000;
+const REFRESH_TIMEOUT_MS = 30 * 60 * 1000;
 
 function formatRefreshSummary(summary: DashboardData["lastRefreshSummary"]) {
   if (!summary) return "官网抓取：--";

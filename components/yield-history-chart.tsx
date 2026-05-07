@@ -54,9 +54,19 @@ function buildSnapshotPoints(history: ProductSnapshot[]): ChartPoint[] {
 }
 
 function buildNavPoints(history: ManagerNavPoint[]): ChartPoint[] {
-  return history
-    .filter((item) => item.annualizedYield !== null)
-    .sort((left, right) => left.navDate.localeCompare(right.navDate))
+  const latestByDate = new Map<string, ManagerNavPoint>();
+
+  for (const item of history) {
+    if (item.annualizedYield === null) continue;
+
+    const current = latestByDate.get(item.navDate);
+    if (!current || current.fetchedAt < item.fetchedAt) {
+      latestByDate.set(item.navDate, item);
+    }
+  }
+
+  return [...latestByDate.values()]
+    .sort((left, right) => left.navDate.localeCompare(right.navDate) || left.fetchedAt.localeCompare(right.fetchedAt))
     .map((item) => ({
       label: item.navDate,
       shortLabel: item.navDate.slice(5),

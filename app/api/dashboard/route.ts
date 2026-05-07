@@ -175,19 +175,21 @@ async function refreshDashboardResponse() {
         total: managerTargets.length
       });
       mergedDb = await mergeNavHistory(history);
-      mergedDb.lastSyncedAt = syncedAt;
+      const completedAt = new Date().toISOString();
+      mergedDb.lastSyncedAt = completedAt;
       mergedDb.lastRefreshSummary = {
         ...summary,
-        completedAt: syncedAt
+        completedAt
       };
       await writeDb(mergedDb);
     } else {
-      mergedDb.lastSyncedAt = syncedAt;
+      const completedAt = new Date().toISOString();
+      mergedDb.lastSyncedAt = completedAt;
       mergedDb.lastRefreshSummary = {
         totalProducts: 0,
         succeededProducts: 0,
         failedProducts: 0,
-        completedAt: syncedAt
+        completedAt
       };
       await writeDb(mergedDb);
     }

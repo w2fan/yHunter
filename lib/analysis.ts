@@ -43,10 +43,22 @@ function groupSnapshotHistory(db: DbShape, productCode: string): ProductSnapshot
 }
 
 function groupPerformanceHistory(db: DbShape, productCode: string): ManagerNavPoint[] {
-  return db.navHistory
-    .filter((point) => point.productCode === productCode)
-    .filter((point) => point.annualizedYield !== null || point.per10kProfit !== null)
-    .sort((a, b) => a.navDate.localeCompare(b.navDate));
+  const latestByDate = new Map<string, ManagerNavPoint>();
+
+  for (const point of db.navHistory) {
+    if (point.productCode !== productCode) continue;
+    if (point.annualizedYield === null && point.per10kProfit === null) continue;
+
+    const key = `${point.source}:${point.navDate}`;
+    const current = latestByDate.get(key);
+    if (!current || current.fetchedAt < point.fetchedAt) {
+      latestByDate.set(key, point);
+    }
+  }
+
+  return [...latestByDate.values()].sort(
+    (a, b) => a.navDate.localeCompare(b.navDate) || a.fetchedAt.localeCompare(b.fetchedAt)
+  );
 }
 
 function latestByCode(products: ProductSnapshot[]): Map<string, ProductSnapshot> {
