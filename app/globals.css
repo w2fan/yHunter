@@ -518,6 +518,31 @@ input {
   border: 1px solid rgba(179, 51, 29, 0.15);
 }
 
+.client-error-panel h1 {
+  margin: 0;
+  color: var(--bad);
+  font-size: 1.35rem;
+}
+
+.client-error-panel p {
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.client-error-panel pre {
+  margin: 16px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  border-radius: 16px;
+  border: 1px solid rgba(179, 51, 29, 0.16);
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--bad);
+  padding: 14px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
 .yield-chart-shell {
   display: grid;
   gap: 12px;
