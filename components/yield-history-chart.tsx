@@ -42,6 +42,10 @@ function formatSigned(value: number | null) {
   return `${prefix}${value.toFixed(2)} pct`;
 }
 
+function lastItem<T>(items: T[]): T | undefined {
+  return items.length ? items[items.length - 1] : undefined;
+}
+
 function buildSnapshotPoints(history: ProductSnapshot[]): ChartPoint[] {
   return history
     .filter((item) => item.incomeRate !== null)
@@ -76,7 +80,9 @@ function buildNavPoints(history: ManagerNavPoint[]): ChartPoint[] {
 
 function summarizeTrend(points: ChartPoint[]) {
   if (points.length < 2) return null;
-  const diff = points.at(-1)!.value - points[0].value;
+  const latestPoint = lastItem(points);
+  if (!latestPoint) return null;
+  const diff = latestPoint.value - points[0].value;
   return {
     diff,
     rising: diff > 0.03,
@@ -181,14 +187,16 @@ export function YieldHistoryChart({
   const navDots = buildDots(navPoints, timelineLabels, chartMin, chartMax);
   const snapshotTrend = summarizeTrend(snapshotPoints);
   const navTrend = summarizeTrend(navPoints);
-  const latestSnapshot = snapshotPoints.at(-1)?.value ?? null;
-  const latestNav = navPoints.at(-1)?.value ?? null;
+  const latestSnapshot = lastItem(snapshotPoints)?.value ?? null;
+  const latestNav = lastItem(navPoints)?.value ?? null;
   const snapshotWindowDiff =
-    snapshotPoints.length >= 2 ? snapshotPoints.at(-1)!.value - snapshotPoints.at(-2)!.value : null;
+    snapshotPoints.length >= 2
+      ? snapshotPoints[snapshotPoints.length - 1].value - snapshotPoints[snapshotPoints.length - 2].value
+      : null;
   const axisLabels = [chartMax, (chartMax + chartMin) / 2, chartMin];
   const snapshotPointMap = new Map(snapshotPoints.map((point) => [point.label, point.value]));
   const navPointMap = new Map(navPoints.map((point) => [point.label, point.value]));
-  const activeLabel = focusedLabel && timelineLabels.includes(focusedLabel) ? focusedLabel : timelineLabels.at(-1)!;
+  const activeLabel = focusedLabel && timelineLabels.includes(focusedLabel) ? focusedLabel : timelineLabels[timelineLabels.length - 1];
   const activeX = timelineX(activeLabel, timelineLabels);
   const activeSnapshot = snapshotDots.find((point) => point.label === activeLabel);
   const activeNav = navDots.find((point) => point.label === activeLabel);
