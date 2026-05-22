@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 
 import { buildDashboard } from "@/lib/analysis";
 import { fetchManagerHistory, hasManagerHistorySupport } from "@/lib/manager-history";
-import { supportsCmbCfwebCashHistory } from "@/lib/manager-support";
 import { enrichProductMappingsFromSpdb } from "@/lib/product-mapping";
 import { finishRefreshProgress, getRefreshProgress, startRefreshProgress, updateRefreshProgress } from "@/lib/refresh-progress";
 import { fetchCashManagementProducts, fetchHoldingSnapshots } from "@/lib/spdb";
@@ -39,6 +38,7 @@ function normalizeDashboardDb(db: DbShape): DbShape {
         return point;
       })
       .filter((point) => point.annualizedYield !== null || point.per10kProfit !== null)
+      .filter((point) => point.source !== "spdb_report" && point.per10kProfit !== null)
   };
 }
 
@@ -125,21 +125,12 @@ async function refreshDashboardResponse() {
       ...mergedDb.holdings
         .map((holding) => holdingMap.get(holding.productCode) ?? marketMap.get(holding.productCode))
         .filter((product): product is NonNullable<typeof product> => Boolean(product)),
+      ...marketProducts
+        .filter((product) => hasManagerHistorySupport(product))
+        .sort((left, right) => (right.incomeRate ?? -Infinity) - (left.incomeRate ?? -Infinity)),
       ...roughDashboard.candidates
         .map((candidate) => candidate.product)
-        .filter((product) => hasManagerHistorySupport(product)),
-      ...marketProducts.filter((product) => product.taCode === "EW" && /阳光碧乐活/u.test(product.productName)),
-      ...marketProducts
-        .filter((product) => product.taCode === "66")
-        .sort((left, right) => (right.incomeRate ?? -Infinity) - (left.incomeRate ?? -Infinity))
-        .slice(0, 12),
-      ...marketProducts
-        .filter((product) => product.taCode === "ZY" && supportsCmbCfwebCashHistory(product.productName))
-        .sort((left, right) => (right.incomeRate ?? -Infinity) - (left.incomeRate ?? -Infinity)),
-      ...marketProducts
-        .filter((product) => product.taCode === "ZX" && /日盈象天天利/u.test(product.productName))
-        .sort((left, right) => (right.incomeRate ?? -Infinity) - (left.incomeRate ?? -Infinity))
-        .slice(0, 12)
+        .filter((product) => hasManagerHistorySupport(product))
     ];
 
     if (managerTargets.length > 0) {

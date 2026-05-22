@@ -3,12 +3,11 @@
 import { useState } from "react";
 import type { PointerEvent } from "react";
 
-import type { ManagerNavPoint, ProductSnapshot } from "@/lib/types";
+import type { ManagerNavPoint } from "@/lib/types";
 
 type RecommendationTone = "good" | "warn" | "bad" | "neutral";
 
 type YieldHistoryChartProps = {
-  latestHistory: ProductSnapshot[];
   navHistory: ManagerNavPoint[];
   recommendationLabel: string;
   recommendationHint: string;
@@ -29,39 +28,29 @@ type PositionedChartPoint = ChartPoint & {
 const SVG_WIDTH = 640;
 const SVG_HEIGHT = 220;
 const CHART_PADDING = { top: 18, right: 16, bottom: 34, left: 16 };
-const TOOLTIP_WIDTH = 178;
+const TOOLTIP_WIDTH = 188;
 const TOOLTIP_HEIGHT = 74;
+const MAX_CHART_GAP_DAYS = 7;
 
-function formatPercent(value: number | null) {
-  return value === null ? "--" : `${value.toFixed(2)}%`;
+function formatPer10k(value: number | null) {
+  return value === null ? "--" : value.toFixed(4);
 }
 
-function formatSigned(value: number | null) {
+function formatSignedPer10k(value: number | null) {
   if (value === null) return "--";
   const prefix = value > 0 ? "+" : "";
-  return `${prefix}${value.toFixed(2)} pct`;
+  return `${prefix}${value.toFixed(4)}`;
 }
 
 function lastItem<T>(items: T[]): T | undefined {
   return items.length ? items[items.length - 1] : undefined;
 }
 
-function buildSnapshotPoints(history: ProductSnapshot[]): ChartPoint[] {
-  return history
-    .filter((item) => item.incomeRate !== null)
-    .sort((left, right) => left.capturedAt.localeCompare(right.capturedAt))
-    .map((item) => ({
-      label: item.capturedDate,
-      shortLabel: item.capturedDate.slice(5),
-      value: item.incomeRate as number
-    }));
-}
-
 function buildNavPoints(history: ManagerNavPoint[]): ChartPoint[] {
   const latestByDate = new Map<string, ManagerNavPoint>();
 
   for (const item of history) {
-    if (item.annualizedYield === null) continue;
+    if (item.per10kProfit === null) continue;
 
     const current = latestByDate.get(item.navDate);
     if (!current || current.fetchedAt < item.fetchedAt) {
@@ -74,19 +63,19 @@ function buildNavPoints(history: ManagerNavPoint[]): ChartPoint[] {
     .map((item) => ({
       label: item.navDate,
       shortLabel: item.navDate.slice(5),
-      value: item.annualizedYield as number
+      value: item.per10kProfit as number
     }));
 }
 
-function summarizeTrend(points: ChartPoint[]) {
+function summarizeTrend(points: ChartPoint[], threshold: number) {
   if (points.length < 2) return null;
   const latestPoint = lastItem(points);
   if (!latestPoint) return null;
   const diff = latestPoint.value - points[0].value;
   return {
     diff,
-    rising: diff > 0.03,
-    falling: diff < -0.03
+    rising: diff > threshold,
+    falling: diff < -threshold
   };
 }
 
@@ -96,14 +85,58 @@ function buildTimelineLabels(snapshotPoints: ChartPoint[], navPoints: ChartPoint
   );
 }
 
-function buildPath(points: PositionedChartPoint[]) {
+function buildTrendPath(points: PositionedChartPoint[]) {
   if (points.length === 0) return "";
+  if (points.length === 1) return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+  if (points.length === 2) {
+    return [
+      `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`,
+      `L ${points[1].x.toFixed(2)} ${points[1].y.toFixed(2)}`
+    ].join(" ");
+  }
 
-  return points
-    .map((point, index) => {
-      return `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
-    })
-    .join(" ");
+  const commands = [`M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`];
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const current = points[index];
+    const next = points[index + 1];
+    const previous = points[index - 1] ?? current;
+    const following = points[index + 2] ?? next;
+    const controlOneX = current.x + (next.x - previous.x) / 6;
+    const controlOneY = current.y + (next.y - previous.y) / 6;
+    const controlTwoX = next.x - (following.x - current.x) / 6;
+    const controlTwoY = next.y - (following.y - current.y) / 6;
+
+    commands.push(
+      `C ${controlOneX.toFixed(2)} ${controlOneY.toFixed(2)}, ${controlTwoX.toFixed(2)} ${controlTwoY.toFixed(2)}, ${next.x.toFixed(2)} ${next.y.toFixed(2)}`
+    );
+  }
+
+  return commands.join(" ");
+}
+
+function daysBetween(laterDate: string, earlierDate: string) {
+  const later = new Date(`${laterDate}T00:00:00Z`).getTime();
+  const earlier = new Date(`${earlierDate}T00:00:00Z`).getTime();
+  if (!Number.isFinite(later) || !Number.isFinite(earlier)) return Number.POSITIVE_INFINITY;
+  return Math.round((later - earlier) / (24 * 60 * 60 * 1000));
+}
+
+function buildContinuousTail(points: ChartPoint[]) {
+  const latest = points.at(-1);
+  if (!latest) return [];
+
+  const tail = [latest];
+  for (let index = points.length - 2; index >= 0; index -= 1) {
+    const nextNewer = tail[0];
+    const candidate = points[index];
+    if (daysBetween(nextNewer.label, candidate.label) > MAX_CHART_GAP_DAYS) {
+      break;
+    }
+    tail.unshift(candidate);
+  }
+
+  return tail;
 }
 
 function timelineX(label: string, timelineLabels: string[]) {
@@ -149,29 +182,27 @@ function toneClassName(tone: RecommendationTone) {
 }
 
 export function YieldHistoryChart({
-  latestHistory,
   navHistory,
   recommendationLabel,
   recommendationHint,
   recommendationTone = "neutral"
 }: YieldHistoryChartProps) {
   const [focusedLabel, setFocusedLabel] = useState<string | null>(null);
-  const snapshotPoints = buildSnapshotPoints(latestHistory);
   const navPoints = buildNavPoints(navHistory);
-  const allValues = [...snapshotPoints, ...navPoints].map((point) => point.value);
+  const allValues = navPoints.map((point) => point.value);
 
-  if (allValues.length === 0) {
+  if (allValues.length < 2) {
     return (
       <section className="yield-chart-shell">
         <div className="yield-chart-header">
           <div>
-            <div className="yield-chart-title">收益走势</div>
-            <div className="yield-chart-subtitle">等待自动刷新积累历史后再画图</div>
+            <div className="yield-chart-title">官网万份收益走势</div>
+            <div className="yield-chart-subtitle">等待管理人官网积累每日万份收益历史</div>
           </div>
           <div className={toneClassName(recommendationTone)}>{recommendationLabel}</div>
         </div>
         <div className="yield-chart-empty">
-          当前还没有可画图的历史点位；下一次刷新后，这里会展示浦发快照收益和管理人 7 日年化的变化。
+          当前还没有足够点位形成官网万份收益曲线；浦发列表只有 7 日年化快照，不进入这张万份收益图。
         </div>
       </section>
     );
@@ -179,26 +210,33 @@ export function YieldHistoryChart({
 
   const minValue = Math.min(...allValues);
   const maxValue = Math.max(...allValues);
-  const padding = Math.max(0.08, (maxValue - minValue) * 0.2);
+  const padding = Math.max(0.01, (maxValue - minValue) * 0.2);
   const chartMin = Math.max(0, minValue - padding);
   const chartMax = maxValue + padding;
-  const timelineLabels = buildTimelineLabels(snapshotPoints, navPoints);
-  const snapshotDots = buildDots(snapshotPoints, timelineLabels, chartMin, chartMax);
+  const timelineLabels = buildTimelineLabels([], navPoints);
   const navDots = buildDots(navPoints, timelineLabels, chartMin, chartMax);
-  const snapshotTrend = summarizeTrend(snapshotPoints);
-  const navTrend = summarizeTrend(navPoints);
-  const latestSnapshot = lastItem(snapshotPoints)?.value ?? null;
+  const trendPath = buildTrendPath(navDots);
+  const continuousNavPoints = buildContinuousTail(navPoints);
+  const hasContinuousNavTrend = continuousNavPoints.length >= 3;
+  const navTrend = summarizeTrend(continuousNavPoints, 0.01);
   const latestNav = lastItem(navPoints)?.value ?? null;
-  const snapshotWindowDiff =
-    snapshotPoints.length >= 2
-      ? snapshotPoints[snapshotPoints.length - 1].value - snapshotPoints[snapshotPoints.length - 2].value
+  const navWindowDiff =
+    navPoints.length >= 2 && daysBetween(navPoints[navPoints.length - 1].label, navPoints[navPoints.length - 2].label) <= MAX_CHART_GAP_DAYS
+      ? navPoints[navPoints.length - 1].value - navPoints[navPoints.length - 2].value
       : null;
   const axisLabels = [chartMax, (chartMax + chartMin) / 2, chartMin];
-  const snapshotPointMap = new Map(snapshotPoints.map((point) => [point.label, point.value]));
   const navPointMap = new Map(navPoints.map((point) => [point.label, point.value]));
-  const activeLabel = focusedLabel && timelineLabels.includes(focusedLabel) ? focusedLabel : timelineLabels[timelineLabels.length - 1];
+  const navMomentumMap = new Map<string, number | null>(
+    navPoints.map((point, index) => [
+      point.label,
+      index === 0 || daysBetween(point.label, navPoints[index - 1].label) > MAX_CHART_GAP_DAYS
+        ? null
+        : point.value - navPoints[index - 1].value
+    ])
+  );
+  const defaultActiveLabel = lastItem(navPoints)?.label ?? timelineLabels[timelineLabels.length - 1];
+  const activeLabel = focusedLabel && timelineLabels.includes(focusedLabel) ? focusedLabel : defaultActiveLabel;
   const activeX = timelineX(activeLabel, timelineLabels);
-  const activeSnapshot = snapshotDots.find((point) => point.label === activeLabel);
   const activeNav = navDots.find((point) => point.label === activeLabel);
   const tooltipX = clamp(activeX + 12, CHART_PADDING.left, SVG_WIDTH - CHART_PADDING.right - TOOLTIP_WIDTH);
   const tooltipY = CHART_PADDING.top + 6;
@@ -213,26 +251,22 @@ export function YieldHistoryChart({
     <section className="yield-chart-shell">
       <div className="yield-chart-header">
         <div>
-          <div className="yield-chart-title">收益走势</div>
-          <div className="yield-chart-subtitle">把每日刷新后的官方快照和管理人历史放在一起看</div>
+          <div className="yield-chart-title">官网万份收益走势</div>
+          <div className="yield-chart-subtitle">主线使用管理人官网每日万份收益</div>
         </div>
         <div className={toneClassName(recommendationTone)}>{recommendationLabel}</div>
       </div>
 
       <div className="yield-chart-meta">
         <span className="yield-chart-legend">
-          <span className="yield-chart-dot yield-chart-dot-snapshot" />
-          浦发快照 {snapshotPoints.length ? formatPercent(latestSnapshot) : "--"}
-        </span>
-        <span className="yield-chart-legend">
           <span className="yield-chart-dot yield-chart-dot-nav" />
-          官网7日年化 {navPoints.length ? formatPercent(latestNav) : "--"}
+          官网万份收益 {formatPer10k(latestNav)}
         </span>
-        <span className="yield-chart-legend">{snapshotWindowDiff === null ? "近次变化 --" : `近次变化 ${formatSigned(snapshotWindowDiff)}`}</span>
+        <span className="yield-chart-legend">{navWindowDiff === null ? "万份收益动能 --" : `万份收益动能 ${formatSignedPer10k(navWindowDiff)}`}</span>
       </div>
 
       <div className="yield-chart-frame">
-        <svg viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`} className="yield-chart-svg" role="img" aria-label="收益历史折线图">
+        <svg viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`} className="yield-chart-svg" role="img" aria-label="官网万份收益历史折线图">
           {axisLabels.map((label) => {
             const y =
               CHART_PADDING.top +
@@ -248,36 +282,26 @@ export function YieldHistoryChart({
                   className="yield-chart-gridline"
                 />
                 <text x={SVG_WIDTH - CHART_PADDING.right} y={y - 6} textAnchor="end" className="yield-chart-axis">
-                  {label.toFixed(2)}%
+                  {label.toFixed(4)}
                 </text>
               </g>
             );
           })}
 
-          {snapshotPoints.length > 0 ? (
-            <path d={buildPath(snapshotDots)} className="yield-chart-line yield-chart-line-snapshot" />
-          ) : null}
-          {navPoints.length > 0 ? (
-            <path d={buildPath(navDots)} className="yield-chart-line yield-chart-line-nav" />
-          ) : null}
-
-          {snapshotDots.map((point, index) => (
-            <g key={`snapshot-${point.label}-${index}`}>
-              <circle cx={point.x} cy={point.y} r={3.2} className="yield-chart-point yield-chart-point-snapshot" />
-              <title>{`${point.label} 浦发快照 ${formatPercent(point.value)}`}</title>
-              {(index === 0 || index === snapshotDots.length - 1) && (
-                <text x={point.x} y={SVG_HEIGHT - 8} textAnchor={index === 0 ? "start" : "end"} className="yield-chart-axis">
-                  {point.shortLabel}
-                </text>
-              )}
-            </g>
-          ))}
+          <path d={trendPath} className="yield-chart-line yield-chart-line-nav" />
 
           {navDots.map((point, index) => (
-            <g key={`nav-${point.label}-${index}`}>
-              <circle cx={point.x} cy={point.y} r={2.6} className="yield-chart-point yield-chart-point-nav" />
-              <title>{`${point.label} 官网7日年化 ${formatPercent(point.value)}`}</title>
-            </g>
+            index === 0 || index === navDots.length - 1 ? (
+              <text
+                key={`nav-label-${point.label}-${index}`}
+                x={point.x}
+                y={SVG_HEIGHT - 8}
+                textAnchor={index === 0 ? "start" : "end"}
+                className="yield-chart-axis"
+              >
+                {point.shortLabel}
+              </text>
+            ) : null
           ))}
 
           <line
@@ -287,9 +311,6 @@ export function YieldHistoryChart({
             y2={SVG_HEIGHT - CHART_PADDING.bottom}
             className="yield-chart-focus-line"
           />
-          {activeSnapshot ? (
-            <circle cx={activeSnapshot.x} cy={activeSnapshot.y} r={5.2} className="yield-chart-focus-point yield-chart-focus-point-snapshot" />
-          ) : null}
           {activeNav ? (
             <circle cx={activeNav.x} cy={activeNav.y} r={4.8} className="yield-chart-focus-point yield-chart-focus-point-nav" />
           ) : null}
@@ -299,11 +320,11 @@ export function YieldHistoryChart({
             <text x={12} y={20} className="yield-chart-tooltip-date">
               {activeLabel}
             </text>
-            <text x={12} y={42} className="yield-chart-tooltip-snapshot">
-              浦发快照 {formatPercent(snapshotPointMap.get(activeLabel) ?? null)}
+            <text x={12} y={42} className="yield-chart-tooltip-nav">
+              官网万份收益 {formatPer10k(navPointMap.get(activeLabel) ?? null)}
             </text>
             <text x={12} y={62} className="yield-chart-tooltip-nav">
-              官网7日年化 {formatPercent(navPointMap.get(activeLabel) ?? null)}
+              万份收益动能 {formatSignedPer10k(navMomentumMap.get(activeLabel) ?? null)}
             </text>
           </g>
 
@@ -320,8 +341,15 @@ export function YieldHistoryChart({
       </div>
 
       <div className="yield-chart-summary">
-        <span>{snapshotTrend?.rising ? "快照仍在抬升" : snapshotTrend?.falling ? "快照开始回落" : "快照相对平稳"}</span>
-        <span>{navTrend?.rising ? "官网动能增强" : navTrend?.falling ? "官网动能转弱" : "官网动能暂无明显拐点"}</span>
+        <span>
+          {!hasContinuousNavTrend
+            ? "万份收益曲线已连接可用样本，日频动能继续等样本"
+            : navTrend?.rising
+              ? "万份收益动能增强"
+              : navTrend?.falling
+                ? "万份收益动能转弱"
+                : "万份收益动能暂无明显拐点"}
+        </span>
         <span>{recommendationHint}</span>
       </div>
     </section>

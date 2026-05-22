@@ -17,6 +17,10 @@ const defaultDb: DbShape = {
   lastRefreshSummary: null
 };
 
+function isUsableNavPoint(point: ManagerNavPoint): boolean {
+  return point.source !== "spdb_report" && point.per10kProfit !== null;
+}
+
 export async function readDb(): Promise<DbShape> {
   await mkdir(DATA_DIR, { recursive: true });
 
@@ -215,10 +219,12 @@ export async function mergeNavHistory(nextHistory: ManagerNavPoint[]): Promise<D
   const latestByDate = new Map<string, ManagerNavPoint>();
 
   for (const point of db.navHistory) {
+    if (!isUsableNavPoint(point)) continue;
     latestByDate.set(`${point.source}:${point.productCode}:${point.navDate}`, point);
   }
 
   for (const point of nextHistory) {
+    if (!isUsableNavPoint(point)) continue;
     const key = `${point.source}:${point.productCode}:${point.navDate}`;
     const current = latestByDate.get(key);
     if (!current || current.fetchedAt <= point.fetchedAt) {

@@ -988,7 +988,6 @@ const spdbWmAdapter: ManagerHistoryAdapter = {
   },
   async fetchHistory(product) {
     const fetchedAt = new Date().toISOString();
-    const reportHistory = await fetchSpdbCashReportHistory(product);
     const rows = await spdbWmSearch<SpdbWmProductRow>({
       chlid: 1002,
       cutsize: 150,
@@ -1003,14 +1002,14 @@ const spdbWmAdapter: ManagerHistoryAdapter = {
 
     const row = rows.find((item) => item.PRDC_CD === product.productCode) ?? rows[0];
     const navDate = formatDate(row?.ACCT_DT);
+    const per10kProfit = normalizeNumber(row?.TDY_MLLN_CPS_PRFT);
 
-    if (!row || !navDate) {
-      return { history: reportHistory };
+    if (!row || !navDate || per10kProfit === null) {
+      return { history: [] };
     }
 
     return {
       history: [
-        ...reportHistory,
         {
           productCode: product.productCode,
           productName: product.productName,
@@ -1023,7 +1022,7 @@ const spdbWmAdapter: ManagerHistoryAdapter = {
             const value = normalizeNumber(row.YLD_7);
             return value === null ? null : value * 100;
           })(),
-          per10kProfit: normalizeNumber(row.TDY_MLLN_CPS_PRFT),
+          per10kProfit,
           fetchedAt,
           source: "spdb_wm"
         }
@@ -1069,6 +1068,8 @@ const cmbcwmAdapter: ManagerHistoryAdapter = {
       .map((row) => {
         const navDate = formatDate(row.ISS_DATE);
         if (!navDate) return null;
+        const per10kProfit = normalizeNumber(row.INCOME);
+        if (per10kProfit === null) return null;
 
         const point: CmbcwmPoint = {
           productCode: product.productCode,
@@ -1082,7 +1083,7 @@ const cmbcwmAdapter: ManagerHistoryAdapter = {
             const value = normalizeNumber(row.WEEK_CLIENTRATE);
             return value === null ? null : value * 100;
           })(),
-          per10kProfit: normalizeNumber(row.INCOME),
+          per10kProfit,
           fetchedAt,
           source: "cmbcwm"
         };
@@ -1122,6 +1123,8 @@ const cmbCfwebAdapter: ManagerHistoryAdapter = {
       .map((row) => {
         const navDate = formatDate(row.znavDat);
         if (!navDate) return null;
+        const per10kProfit = normalizeNumber(row.znavChg);
+        if (per10kProfit === null) return null;
 
         const point: CmbCfwebPoint = {
           productCode: product.productCode,
@@ -1132,7 +1135,7 @@ const cmbCfwebAdapter: ManagerHistoryAdapter = {
           nav: normalizeNumber(row.znavVal),
           totalNav: normalizeNumber(row.znavCtl),
           annualizedYield: normalizeNumber(row.znavPct),
-          per10kProfit: normalizeNumber(row.znavChg),
+          per10kProfit,
           fetchedAt,
           source: "cmb_cfweb"
         };
@@ -1184,6 +1187,8 @@ const cmbCfwebEwAdapter: ManagerHistoryAdapter = {
       .map((row) => {
         const navDate = formatDate(row.znavDat);
         if (!navDate) return null;
+        const per10kProfit = normalizeNumber(row.znavChg);
+        if (per10kProfit === null) return null;
 
         const point: CmbCfwebPoint = {
           productCode: product.productCode,
@@ -1194,7 +1199,7 @@ const cmbCfwebEwAdapter: ManagerHistoryAdapter = {
           nav: normalizeNumber(row.znavVal),
           totalNav: normalizeNumber(row.znavCtl),
           annualizedYield: normalizeNumber(row.znavPct),
-          per10kProfit: normalizeNumber(row.znavChg),
+          per10kProfit,
           fetchedAt,
           source: "cmb_cfweb"
         };
@@ -1258,6 +1263,8 @@ const citicWealthAdapter: ManagerHistoryAdapter = {
       .map((row) => {
         const navDate = formatDate(row.navDate);
         if (!navDate) return null;
+        const per10kProfit = normalizeNumber(row.outTenThousandIncomeAmt ?? row.tenThousandIncomeAmt);
+        if (per10kProfit === null) return null;
 
         const point: CiticPoint = {
           productCode: product.productCode,
@@ -1271,7 +1278,7 @@ const citicWealthAdapter: ManagerHistoryAdapter = {
             const value = normalizeNumber(row.sevenDaysIncomeRate);
             return value === null ? null : value * 100;
           })(),
-          per10kProfit: normalizeNumber(row.outTenThousandIncomeAmt ?? row.tenThousandIncomeAmt),
+          per10kProfit,
           fetchedAt,
           source: "citic_wealth"
         };
@@ -1282,7 +1289,8 @@ const citicWealthAdapter: ManagerHistoryAdapter = {
 
     if (history.length === 0 && detail) {
       const navDate = formatDate(detail.navDate);
-      if (navDate) {
+      const per10kProfit = normalizeNumber(detail.outTenThousandIncomeAmt ?? detail.tenThousandIncomeAmt);
+      if (navDate && per10kProfit !== null) {
         history.push({
           productCode: product.productCode,
           productName: product.productName,
@@ -1295,7 +1303,7 @@ const citicWealthAdapter: ManagerHistoryAdapter = {
             const value = normalizeNumber(detail.sevenDaysIncomeRate);
             return value === null ? null : value * 100;
           })(),
-          per10kProfit: normalizeNumber(detail.outTenThousandIncomeAmt ?? detail.tenThousandIncomeAmt),
+          per10kProfit,
           fetchedAt,
           source: "citic_wealth"
         });

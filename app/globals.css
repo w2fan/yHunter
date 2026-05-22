@@ -621,10 +621,6 @@ input {
   flex: 0 0 auto;
 }
 
-.yield-chart-dot-snapshot {
-  background: #c65112;
-}
-
 .yield-chart-dot-nav {
   background: #1d7d63;
 }
@@ -660,10 +656,6 @@ input {
   stroke-linejoin: round;
 }
 
-.yield-chart-line-snapshot {
-  stroke: #c65112;
-}
-
 .yield-chart-line-nav {
   stroke: #1d7d63;
 }
@@ -671,10 +663,6 @@ input {
 .yield-chart-point {
   stroke: rgba(255, 255, 255, 0.9);
   stroke-width: 1.5;
-}
-
-.yield-chart-point-snapshot {
-  fill: #c65112;
 }
 
 .yield-chart-point-nav {
@@ -691,10 +679,6 @@ input {
   stroke: white;
   stroke-width: 2.5;
   filter: drop-shadow(0 2px 4px rgba(36, 25, 14, 0.2));
-}
-
-.yield-chart-focus-point-snapshot {
-  fill: #c65112;
 }
 
 .yield-chart-focus-point-nav {
@@ -714,10 +698,6 @@ input {
 
 .yield-chart-tooltip-date {
   fill: var(--text);
-}
-
-.yield-chart-tooltip-snapshot {
-  fill: #c65112;
 }
 
 .yield-chart-tooltip-nav {

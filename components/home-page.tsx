@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { YieldHistoryChart } from "@/components/yield-history-chart";
-import type { CandidateInsight, DashboardData, HoldingInsight } from "@/lib/types";
+import type { CandidateInsight, DashboardData, HoldingInsight, ManagerNavPoint } from "@/lib/types";
 
 type RefreshProgress = {
   active: boolean;
@@ -15,6 +15,21 @@ type RefreshProgress = {
   total: number;
   startedAt: string | null;
   updatedAt: string;
+};
+
+type Per10kInsightFields = {
+  recentPer10k?: number | null;
+  priorPer10k?: number | null;
+  per10kAcceleration?: number | null;
+  per10kDrawdown?: number | null;
+  dailyPerformanceSamples?: number;
+};
+
+type InsightWithPer10k = (HoldingInsight | CandidateInsight) & Per10kInsightFields;
+
+type Per10kSeriesPoint = {
+  date: string;
+  value: number;
 };
 
 function formatRefreshFailure(progress: RefreshProgress | null, fallback: string) {
@@ -43,8 +58,147 @@ function formatDiff(value: number | null) {
   return `${prefix}${value.toFixed(2)} pct`;
 }
 
+function formatPer10k(value: number | null) {
+  return value === null ? "--" : value.toFixed(4);
+}
+
+function formatPer10kDiff(value: number | null) {
+  if (value === null) return "--";
+  const prefix = value > 0 ? "+" : "";
+  return `${prefix}${value.toFixed(4)}`;
+}
+
 function formatSampleCount(value: number) {
   return `${value} 条`;
+}
+
+function daysBetween(laterDate: string, earlierDate: string) {
+  const later = new Date(`${laterDate}T00:00:00Z`).getTime();
+  const earlier = new Date(`${earlierDate}T00:00:00Z`).getTime();
+  if (!Number.isFinite(later) || !Number.isFinite(earlier)) return Number.POSITIVE_INFINITY;
+  return Math.round((later - earlier) / (24 * 60 * 60 * 1000));
+}
+
+function buildPer10kSeries(history: ManagerNavPoint[]): Per10kSeriesPoint[] {
+  const latestByDate = new Map<string, ManagerNavPoint>();
+
+  for (const item of history) {
+    if (item.per10kProfit === null) continue;
+
+    const current = latestByDate.get(item.navDate);
+    if (!current || current.fetchedAt < item.fetchedAt) {
+      latestByDate.set(item.navDate, item);
+    }
+  }
+
+  return [...latestByDate.values()]
+    .sort((left, right) => left.navDate.localeCompare(right.navDate) || left.fetchedAt.localeCompare(right.fetchedAt))
+    .map((item) => ({
+      date: item.navDate,
+      value: item.per10kProfit as number
+    }));
+}
+
+function buildContinuousPer10kTail(history: ManagerNavPoint[]) {
+  const series = buildPer10kSeries(history);
+  const latest = series.at(-1);
+  if (!latest) return [];
+
+  const tail = [latest];
+  for (let index = series.length - 2; index >= 0; index -= 1) {
+    const nextNewer = tail[0];
+    const candidate = series[index];
+    if (daysBetween(nextNewer.date, candidate.date) > 7) {
+      break;
+    }
+    tail.unshift(candidate);
+  }
+
+  return tail;
+}
+
+function averagePer10kWindow(history: ManagerNavPoint[], size: number, offset = 0) {
+  const series = buildContinuousPer10kTail(history);
+  const end = series.length - offset;
+  if (end <= 0) return null;
+
+  const window = series.slice(Math.max(0, end - size), end);
+  if (window.length < size) return null;
+
+  return window.reduce((sum, point) => sum + point.value, 0) / window.length;
+}
+
+function peakPer10kWindow(history: ManagerNavPoint[], size: number) {
+  const series = buildContinuousPer10kTail(history);
+  if (series.length < size) return null;
+
+  let peak: number | null = null;
+  for (let start = 0; start <= series.length - size; start += 1) {
+    const window = series.slice(start, start + size);
+    const average = window.reduce((sum, point) => sum + point.value, 0) / window.length;
+    if (peak === null || average > peak) {
+      peak = average;
+    }
+  }
+
+  return peak;
+}
+
+function getRecentPer10k(insight: HoldingInsight | CandidateInsight) {
+  const per10kInsight = insight as InsightWithPer10k;
+  if (typeof per10kInsight.recentPer10k === "number") return per10kInsight.recentPer10k;
+  return averagePer10kWindow(per10kInsight.navHistory, 3);
+}
+
+function getPriorPer10k(insight: HoldingInsight | CandidateInsight) {
+  const per10kInsight = insight as InsightWithPer10k;
+  if (typeof per10kInsight.priorPer10k === "number") return per10kInsight.priorPer10k;
+  return averagePer10kWindow(per10kInsight.navHistory, 3, 3);
+}
+
+function getPer10kAcceleration(insight: HoldingInsight | CandidateInsight) {
+  const per10kInsight = insight as InsightWithPer10k;
+  if (typeof per10kInsight.per10kAcceleration === "number") return per10kInsight.per10kAcceleration;
+
+  const recentPer10k = getRecentPer10k(per10kInsight);
+  const priorPer10k = getPriorPer10k(per10kInsight);
+  return recentPer10k !== null && priorPer10k !== null ? recentPer10k - priorPer10k : null;
+}
+
+function getPer10kDrawdown(insight: HoldingInsight | CandidateInsight) {
+  const per10kInsight = insight as InsightWithPer10k;
+  if (typeof per10kInsight.per10kDrawdown === "number") return per10kInsight.per10kDrawdown;
+
+  const recentPer10k = getRecentPer10k(per10kInsight);
+  const peakPer10k = peakPer10kWindow(per10kInsight.navHistory, 3);
+  return recentPer10k !== null && peakPer10k !== null ? peakPer10k - recentPer10k : null;
+}
+
+function getDailyPerformanceSamples(insight: HoldingInsight | CandidateInsight) {
+  const per10kInsight = insight as InsightWithPer10k;
+  if (typeof per10kInsight.dailyPerformanceSamples === "number") return per10kInsight.dailyPerformanceSamples;
+  return buildContinuousPer10kTail(per10kInsight.navHistory).length;
+}
+
+function buildPer10kFields(insight: HoldingInsight | CandidateInsight): Required<Per10kInsightFields> {
+  const recentPer10k = getRecentPer10k(insight);
+  const priorPer10k = getPriorPer10k(insight);
+  const explicitAcceleration = (insight as InsightWithPer10k).per10kAcceleration;
+  const per10kAcceleration =
+    typeof explicitAcceleration === "number"
+      ? explicitAcceleration
+      : recentPer10k !== null && priorPer10k !== null
+        ? recentPer10k - priorPer10k
+        : null;
+  const per10kDrawdown = getPer10kDrawdown(insight);
+
+  return {
+    recentPer10k,
+    priorPer10k,
+    per10kAcceleration,
+    per10kDrawdown,
+    dailyPerformanceSamples: getDailyPerformanceSamples(insight)
+  };
 }
 
 const REFRESH_TIMEOUT_MS = 30 * 60 * 1000;
@@ -113,8 +267,9 @@ function RefreshIcon() {
 function holdingFromCandidate(candidate: CandidateInsight, holding: HoldingInsight["holding"]): HoldingInsight {
   const signal: HoldingInsight["signal"] =
     candidate.stage === "fading" ? "watch" : candidate.stage === "mature" ? "hold" : "watch";
+  const per10kFields = buildPer10kFields(candidate);
 
-  return {
+  const insight: HoldingInsight & Per10kInsightFields = {
     holding,
     latest: candidate.product,
     latestHistory: candidate.latestHistory,
@@ -126,6 +281,7 @@ function holdingFromCandidate(candidate: CandidateInsight, holding: HoldingInsig
     recentAnnualized: candidate.recentAnnualized,
     priorAnnualized: candidate.priorAnnualized,
     acceleration: candidate.acceleration,
+    ...per10kFields,
     signal,
     confidence: candidate.confidence,
     reasons: [
@@ -133,6 +289,8 @@ function holdingFromCandidate(candidate: CandidateInsight, holding: HoldingInsig
       ...candidate.reasons
     ]
   };
+
+  return insight;
 }
 
 export default function HomePage() {
@@ -284,6 +442,7 @@ export default function HomePage() {
                 latestHistory: [],
                 navHistory: [],
                 performanceSamples: 0,
+                dailyPerformanceSamples: 0,
                 marketGap: null,
                 peakDrawdown: null,
                 sevenDayChange: null,
@@ -385,7 +544,7 @@ export default function HomePage() {
           <div className="hero-toolbar">
             <div className="hero-meta">
               <span className="pill">默认卖出规则：回归均值 + 高位回落</span>
-              <span className="pill">候选规则：收益溢价 + 新鲜度 + 动量</span>
+              <span className="pill">候选规则：收益溢价 + 新鲜度 + 万份动能</span>
             </div>
           </div>
           {refreshing || refreshProgress?.active ? (
@@ -483,32 +642,32 @@ export default function HomePage() {
 
                     <div className="detail-grid">
                       <div className="detail">
-                        <div className="detail-label">当前收益</div>
+                        <div className="detail-label">当前收益率</div>
                         <div className="detail-value">{formatRate(item.latest?.incomeRate ?? null)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">历史样本</div>
-                        <div className="detail-value">{formatSampleCount(item.performanceSamples)}</div>
+                        <div className="detail-label">日频样本</div>
+                        <div className="detail-value">{formatSampleCount(getDailyPerformanceSamples(item))}</div>
                       </div>
                       <div className="detail">
                         <div className="detail-label">相对均值</div>
                         <div className="detail-value">{formatDiff(item.marketGap)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">7天变化</div>
+                        <div className="detail-label">快照7天变化</div>
                         <div className="detail-value">{formatDiff(item.sevenDayChange)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">近期7日年化</div>
-                        <div className="detail-value">{formatRate(item.recentAnnualized)}</div>
+                        <div className="detail-label">近期万份收益</div>
+                        <div className="detail-value">{formatPer10k(getRecentPer10k(item))}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">短期动能</div>
-                        <div className="detail-value">{formatDiff(item.acceleration)}</div>
+                        <div className="detail-label">万份收益动能</div>
+                        <div className="detail-value">{formatPer10kDiff(getPer10kAcceleration(item))}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">距高点回落</div>
-                        <div className="detail-value">{formatDiff(item.peakDrawdown)}</div>
+                        <div className="detail-label">万份距高点</div>
+                        <div className="detail-value">{formatPer10k(getPer10kDrawdown(item))}</div>
                       </div>
                     </div>
 
@@ -518,7 +677,6 @@ export default function HomePage() {
                     </div>
 
                     <YieldHistoryChart
-                      latestHistory={item.latestHistory}
                       navHistory={item.navHistory}
                       recommendationLabel={`${signalText[item.signal]} · ${item.confidence}`}
                       recommendationHint={holdingActionHint(item.signal, item.confidence)}
@@ -612,28 +770,28 @@ export default function HomePage() {
 
                     <div className="detail-grid">
                       <div className="detail">
-                        <div className="detail-label">当前收益</div>
+                        <div className="detail-label">当前收益率</div>
                         <div className="detail-value">{formatRate(item.product.incomeRate)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">历史样本</div>
-                        <div className="detail-value">{formatSampleCount(item.performanceSamples)}</div>
+                        <div className="detail-label">日频样本</div>
+                        <div className="detail-value">{formatSampleCount(getDailyPerformanceSamples(item))}</div>
                       </div>
                       <div className="detail">
                         <div className="detail-label">相对中位溢价</div>
                         <div className="detail-value">{formatDiff(item.marketPremium)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">近几日变化</div>
+                        <div className="detail-label">快照近几日变化</div>
                         <div className="detail-value">{formatDiff(item.recentChange)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">近期7日年化</div>
-                        <div className="detail-value">{formatRate(item.recentAnnualized)}</div>
+                        <div className="detail-label">近期万份收益</div>
+                        <div className="detail-value">{formatPer10k(getRecentPer10k(item))}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">短期动能</div>
-                        <div className="detail-value">{formatDiff(item.acceleration)}</div>
+                        <div className="detail-label">万份收益动能</div>
+                        <div className="detail-value">{formatPer10kDiff(getPer10kAcceleration(item))}</div>
                       </div>
                     </div>
 
@@ -643,7 +801,6 @@ export default function HomePage() {
                     </div>
 
                     <YieldHistoryChart
-                      latestHistory={item.latestHistory}
                       navHistory={item.navHistory}
                       recommendationLabel={`${candidateStageLabel(item.stage)} · ${item.confidence}`}
                       recommendationHint={candidateActionHint(item.stage, item.confidence)}

@@ -106,6 +106,7 @@ npm run build
 - `PORT=3000`
 - `YHUNTER_DATA_DIR=/var/lib/yhunter`
 - `OPENSSL_CONF=/opt/yHunter/openssl-legacy.cnf`
+- 一个每日自动刷新进程 `yhunter-refresh-scheduler`
 
 启动：
 
@@ -117,6 +118,31 @@ pm2 startup
 ```
 
 如果 `pm2 startup` 输出额外命令，按提示再执行一次。
+
+`yhunter-refresh-scheduler` 默认每天服务器本地时间 `09:20,16:20,22:20` 调用 `/api/dashboard`，用于把浦银理财这类“官网只返回当前万份收益”的数据源固化到 `/var/lib/yhunter/db.json`。同一净值日期会按来源和日期去重，多次刷新不会重复污染数据；这样做是为了降低官网较晚更新时漏掉当天万份收益的概率。如果要调整时间，修改 `ecosystem.config.cjs` 里的 `YHUNTER_REFRESH_AT` 后重新执行：
+
+```bash
+pm2 restart ecosystem.config.cjs --update-env
+pm2 save
+```
+
+需要手动补一次当天数据时，可在服务器执行：
+
+```bash
+cd /opt/yHunter
+npm run refresh
+```
+
+## 收益历史口径
+
+货币类产品的业绩追踪以管理人官网披露的每日万份收益为主线。评分、动能和前端曲线只使用带 `per10kProfit` 的官网历史点：
+
+- 民生理财、招银理财、光大理财、信银理财：官网历史接口可以返回日频万份收益，刷新时会尽量补齐完整历史。
+- 浦银理财：官网当前接口只返回最新万份收益，历史需要依赖定时刷新逐日固化。
+- 浦发列表中的 `近七日年化` 只作为榜单快照和横向参考，不进入万份收益曲线。
+- 季报 PDF 中的 `spdb_report` 点不是日频数据，不进入评分、动能和图表，也不会在后续刷新时继续写入有效 `navHistory`。
+
+如果发现某个产品日频样本不足，优先检查 `pm2 logs yhunter-refresh-scheduler` 和 `/var/lib/yhunter/db.json` 中该产品的 `navHistory` 来源。
 
 ### 7. Nginx 反向代理
 
@@ -194,95 +220,16 @@ DEPLOY_PATH=/opt/yHunter
 - `pm2 restart ecosystem.config.cjs --update-env`
 - `pm2 save`
 
-## GitHub Actions 自动部署
+## GitHub Actions
 
-如果希望 `push 到 main` 后自动更新服务器，可以使用仓库自带工作流：
-
-`[deploy.yml](/Users/fan/Documents/project/yHunter/.github/workflows/deploy.yml)`
-
-### 需要配置的 GitHub Secrets
-
-在 GitHub 仓库：
-
-- `Settings`
-- `Secrets and variables`
-- `Actions`
-
-新增这些 secrets：
-
-- `DEPLOY_HOST`
-- `DEPLOY_USER`
-- `DEPLOY_SSH_KEY`
-- `DEPLOY_PORT`（可选，默认 `22`）
-
-推荐值：
-
-- `DEPLOY_HOST`: 服务器公网 IP
-- `DEPLOY_USER`: `root`
-- `DEPLOY_PORT`: `22`
-
-`DEPLOY_SSH_KEY` 需要填写“GitHub Actions 用来登录服务器”的私钥内容。
-
-### 服务器侧准备
-
-1. 在服务器上生成一把专门给 GitHub Actions 使用的 SSH key，或使用现有允许登录服务器的私钥对应公钥。
-2. 把公钥加入服务器用户的 `~/.ssh/authorized_keys`。
-3. 确保服务器上这些命令已经可用：
-
-```bash
-cd /opt/yHunter
-git pull
-npm install
-npm run build
-pm2 restart ecosystem.config.cjs --update-env
-pm2 save
-```
-
-### 工作流行为
-
-触发条件：
-
-- push 到 `main`
-- 手动点击 `Run workflow`
-
-执行内容：
-
-- SSH 登录服务器
-- 进入 `/opt/yHunter`
-- `git pull`
-- `npm install`
-- `npm run build`
-- `pm2 restart ecosystem.config.cjs --update-env`
-- `pm2 save`
-
-## GitHub Actions 定时刷新
-
-仓库还包含一个定时刷新工作流：
-
-`[refresh-nightly.yml](/Users/fan/Documents/project/yHunter/.github/workflows/refresh-nightly.yml)`
-
-触发方式：
-
-- 每天 `15:00 UTC`
-- 手动 `Run workflow`
-
-对中国时区来说，`15:00 UTC` 对应北京时间 `23:00`。
-
-工作流会通过 SSH 登录服务器，然后执行：
-
-```bash
-curl -X POST http://127.0.0.1:3000/api/dashboard
-```
-
-也就是触发一次“正式刷新”，效果和页面上的手动刷新按钮一致。
-
-如果刷新任务已经在进行中，接口会返回 `409`，避免并发跑两轮。
+仓库已移除 GitHub Actions 自动部署和定时刷新工作流。部署改由本机 `scripts/deploy.sh` 或服务器手动命令触发；定时刷新改由 PM2 进程 `yhunter-refresh-scheduler` 在服务器本地执行。
 
 ## 常用运维命令
 
 ```bash
 pm2 status
 pm2 logs yhunter
+pm2 logs yhunter-refresh-scheduler
 pm2 restart yhunter
 pm2 restart ecosystem.config.cjs --update-env
 systemctl status nginx
