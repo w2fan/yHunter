@@ -176,7 +176,9 @@ systemctl reload nginx
 
 ## 更新部署
 
-代码更新后，在服务器执行：
+日常部署依赖服务器侧已经配置好的自动化：本地提交并 `git push origin main` 后，服务器侧自动化会收到 GitHub push 事件，然后在服务器本机进入 `/opt/yHunter` 执行拉取、构建和 PM2 重启。Codex 或本机操作员通常只需要完成提交和推送，不需要从本机 SSH 登录服务器部署。
+
+服务器侧自动化的等价执行内容是：
 
 ```bash
 cd /opt/yHunter
@@ -187,42 +189,13 @@ pm2 restart ecosystem.config.cjs --update-env
 pm2 save
 ```
 
-如果你想在本机一键部署，可以使用仓库自带脚本。
-
-### 本机一键部署
-
-先复制配置文件：
-
-```bash
-cp scripts/deploy.example.env scripts/deploy.env
-```
-
-按实际情况填写：
-
-```bash
-DEPLOY_HOST=your-server-ip
-DEPLOY_USER=root
-DEPLOY_PATH=/opt/yHunter
-```
-
-然后在本机执行：
-
-```bash
-./scripts/deploy.sh
-```
-
-脚本会自动完成：
-
-- SSH 登录服务器
-- `git pull`
-- `npm install`
-- `npm run build`
-- `pm2 restart ecosystem.config.cjs --update-env`
-- `pm2 save`
+`scripts/deploy.sh` 是早期本机 SSH 部署脚本，当前不是默认部署路径。除非明确要走 SSH 兜底，不要使用它。
 
 ## GitHub Actions
 
-仓库已移除 GitHub Actions 自动部署和定时刷新工作流。部署改由本机 `scripts/deploy.sh` 或服务器手动命令触发；定时刷新改由 PM2 进程 `yhunter-refresh-scheduler` 在服务器本地执行。
+仓库内已移除 GitHub Actions workflow 文件，不再由仓库里的 Actions 执行 SSH 部署或定时刷新。
+
+当前自动部署是服务器侧配置的外部自动化，不在本仓库 `.github/workflows` 中维护：push 到 GitHub 后，服务器自己拉取并部署。定时刷新由 PM2 进程 `yhunter-refresh-scheduler` 在服务器本地执行。
 
 ## 常用运维命令
 
