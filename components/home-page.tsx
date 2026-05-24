@@ -32,6 +32,10 @@ type Per10kSeriesPoint = {
   value: number;
 };
 
+type HomePageProps = {
+  appVersion: string;
+};
+
 function formatRefreshFailure(progress: RefreshProgress | null, fallback: string) {
   const location = progress?.currentProduct
     ? `${progress.currentManager ?? "管理人官网"} / ${progress.currentProduct}`
@@ -293,7 +297,7 @@ function holdingFromCandidate(candidate: CandidateInsight, holding: HoldingInsig
   return insight;
 }
 
-export default function HomePage() {
+export default function HomePage({ appVersion }: HomePageProps) {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -537,7 +541,12 @@ export default function HomePage() {
     <main className="page-shell">
       <div className="page-inner">
         <section className="hero">
-          <h1>打榜理财猎手</h1>
+          <div className="hero-heading-row">
+            <h1>打榜理财猎手</h1>
+            <span className="version-pill" title="服务器当前 Git 版本">
+              版本 {appVersion}
+            </span>
+          </div>
           <p>
             盯住浦发公告代销的日日丰、R1、人民币现金管理类理财，识别谁在打榜、谁回归了均值。
           </p>
