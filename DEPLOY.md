@@ -8,6 +8,7 @@
 - 进程管理：`pm2`
 - 反向代理：`nginx`
 - Node 版本：`22.x`
+- 公网访问地址：`http://101.34.50.208/`
 
 项目代码通过 Git 更新，运行数据不跟着 Git 走。
 
@@ -230,6 +231,7 @@ OPENSSL_CONF=/opt/yHunter/openssl-legacy.cnf
 ### 验证应用是否在线
 
 ```bash
+curl http://101.34.50.208/
 curl http://127.0.0.1:3000/
 curl http://127.0.0.1:3000/api/dashboard/progress
 curl http://127.0.0.1/
