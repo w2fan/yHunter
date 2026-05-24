@@ -193,7 +193,9 @@ pm2 save
 
 ## GitHub Actions
 
-仓库保留 `.github/workflows/deploy.yml` 作为唯一的部署 workflow。它在 push 到 `main` 时自动触发，也可以通过 GitHub 页面上的 `workflow_dispatch` 手动触发。workflow 不把本地数据推到服务器，而是通过 SSH 进入服务器，在服务器本机执行 `git pull`、安装依赖、构建和 PM2 重启。
+仓库保留 `.github/workflows/deploy.yml` 作为唯一的部署 workflow。它在 push 到 `main` 时自动触发，也可以通过 GitHub 页面上的 `workflow_dispatch` 手动触发。workflow 不把本地数据推到服务器，而是通过 SSH 进入服务器，在服务器本机执行拉取、安装依赖、构建和 PM2 重启。
+
+部署目录 `/opt/yHunter` 原则上应保持 tracked 文件干净。如果服务器上存在 tracked 本地改动，workflow 会先打印 `git status --short`，再把这些改动存入一个 deploy stash，然后执行 `git pull --ff-only`。这不会处理未跟踪文件，也不会影响 `/var/lib/yhunter/db.json`。
 
 旧的 nightly refresh GitHub Action 已移除。定时刷新由 PM2 进程 `yhunter-refresh-scheduler` 在服务器本地执行，避免 GitHub Actions 定时任务和服务器内置刷新重复写数据。
 

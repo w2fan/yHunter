@@ -35,9 +35,14 @@ jobs:
             cd /opt/yHunter
             node -v
             npm -v
+            if ! git diff --quiet || ! git diff --cached --quiet; then
+              echo "Tracked local changes detected before deploy:"
+              git status --short
+              git stash push --message "deploy auto-stash before ${{ github.sha }}" -- .
+            fi
             for attempt in 1 2 3; do
               echo "git pull attempt ${attempt}..."
-              if git pull; then
+              if git pull --ff-only; then
                 break
               fi
               if [ "${attempt}" -eq 3 ]; then
