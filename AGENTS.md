@@ -15,6 +15,6 @@
 - 代码修改通常需要运行 `npm run typecheck`。
 - 文档-only 修改不需要强行跑构建，但仍要检查 `git status --short --branch`。
 - 推送前再次确认提交内容只包含本次用户要求的代码或文档变更。
-- 部署不是从本机 SSH 到服务器执行。推送到 GitHub 后，服务器侧已有自动化会感知 push，并在服务器本机执行拉取、构建和 PM2 重启。除非用户明确要求，不要运行 `scripts/deploy.sh` 或尝试 SSH 登录服务器部署。
+- 不要从本机手动 SSH 到服务器部署。日常部署路径是提交并 `git push origin main`，由仓库的 `Deploy` GitHub Action 使用服务器凭据触发服务器侧 `git pull`、`npm install`、`npm run build` 和 PM2 重启。除非用户明确要求，不要运行 `scripts/deploy.sh` 或手动 SSH 登录服务器部署。
 
 更多部署细节见 `DEPLOY.md`。

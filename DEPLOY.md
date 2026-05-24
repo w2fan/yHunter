@@ -176,7 +176,7 @@ systemctl reload nginx
 
 ## 更新部署
 
-日常部署依赖服务器侧已经配置好的自动化：本地提交并 `git push origin main` 后，服务器侧自动化会收到 GitHub push 事件，然后在服务器本机进入 `/opt/yHunter` 执行拉取、构建和 PM2 重启。Codex 或本机操作员通常只需要完成提交和推送，不需要从本机 SSH 登录服务器部署。
+日常部署依赖仓库里的 `Deploy` GitHub Action：本地提交并 `git push origin main` 后，GitHub Action 使用仓库 secrets 中的服务器凭据连接服务器，然后在服务器本机进入 `/opt/yHunter` 执行拉取、构建和 PM2 重启。Codex 或本机操作员通常只需要完成提交和推送，不需要从本机手动 SSH 登录服务器部署。
 
 服务器侧自动化的等价执行内容是：
 
@@ -193,9 +193,9 @@ pm2 save
 
 ## GitHub Actions
 
-仓库内已移除 GitHub Actions workflow 文件，不再由仓库里的 Actions 执行 SSH 部署或定时刷新。
+仓库保留 `.github/workflows/deploy.yml` 作为唯一的部署 workflow。它在 push 到 `main` 时自动触发，也可以通过 GitHub 页面上的 `workflow_dispatch` 手动触发。workflow 不把本地数据推到服务器，而是通过 SSH 进入服务器，在服务器本机执行 `git pull`、安装依赖、构建和 PM2 重启。
 
-当前自动部署是服务器侧配置的外部自动化，不在本仓库 `.github/workflows` 中维护：push 到 GitHub 后，服务器自己拉取并部署。定时刷新由 PM2 进程 `yhunter-refresh-scheduler` 在服务器本地执行。
+旧的 nightly refresh GitHub Action 已移除。定时刷新由 PM2 进程 `yhunter-refresh-scheduler` 在服务器本地执行，避免 GitHub Actions 定时任务和服务器内置刷新重复写数据。
 
 ## 常用运维命令
 
