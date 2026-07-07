@@ -62,7 +62,21 @@ export type DbShape = {
   } | null;
 };
 
-export type HoldingInsight = {
+export type StableCoreMetrics = {
+  stableCoreYield: number | null;
+  stableCoreSamples: number;
+  recentPer10k30Median: number | null;
+  recentPer10k30WinsorizedAvg: number | null;
+  recentPer10k14Median: number | null;
+  recentPer10k14WinsorizedAvg: number | null;
+  recentPer10k60Median: number | null;
+  spikeDays30: number | null;
+  stability30: number | null;
+  latestNavDate: string | null;
+  navFreshnessDays: number | null;
+};
+
+export type HoldingInsight = StableCoreMetrics & {
   holding: Holding;
   latest: ProductSnapshot | null;
   latestHistory: ProductSnapshot[];
@@ -79,19 +93,24 @@ export type HoldingInsight = {
   recentAnnualized: number | null;
   priorAnnualized: number | null;
   acceleration: number | null;
-  signal: "sell" | "watch" | "hold" | "insufficient_data";
+  switchTargetProductCode: string | null;
+  switchTargetProductName: string | null;
+  bestCandidateCoreYield: number | null;
+  bestCandidateCoreYieldGap: number | null;
+  switchExpectedLiftPer10k: number | null;
+  signal: "sell" | "hold";
   confidence: "low" | "medium" | "high";
   reasons: string[];
 };
 
-export type CandidateInsight = {
+export type CandidateInsight = StableCoreMetrics & {
   product: ProductSnapshot;
   latestHistory: ProductSnapshot[];
   navHistory: ManagerNavPoint[];
   performanceSamples: number;
   dailyPerformanceSamples?: number;
   score: number;
-  stage: "fresh_spike" | "warming_up" | "mature" | "fading";
+  stage: "core" | "candidate" | "watch" | "stale";
   confidence: "low" | "medium" | "high";
   reasons: string[];
   marketPremium: number | null;

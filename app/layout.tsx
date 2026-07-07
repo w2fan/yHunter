@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "打榜理财猎手",
-  description: "跟踪浦发代销现金管理类理财产品，识别打榜阶段并辅助调仓。"
+  title: "稳态现金管理筛选",
+  description: "跟踪现金管理类理财产品的核心万份收益，辅助低频轮动。"
 };
 
 const clientErrorScript = `

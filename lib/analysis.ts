@@ -5,13 +5,25 @@ import type {
   Holding,
   HoldingInsight,
   ManagerNavPoint,
-  ProductSnapshot
+  ProductSnapshot,
+  StableCoreMetrics
 } from "@/lib/types";
 import { supportsCmbCfwebCashHistory } from "@/lib/manager-support";
 
 const DAILY_TREND_WINDOW = 3;
 const DAILY_TREND_LOOKBACK = 30;
 const MAX_DAILY_TREND_GAP_DAYS = 7;
+const STABLE_CORE_MAIN_WINDOW = 30;
+const STABLE_CORE_RECENT_WINDOW = 14;
+const STABLE_CORE_LONG_WINDOW = 60;
+const MIN_STABLE_CORE_MAIN_SAMPLES = 14;
+const MIN_STABLE_CORE_RECENT_SAMPLES = 7;
+const MIN_STABLE_CORE_LONG_SAMPLES = 30;
+const PER10K_SPIKE_CAP = 0.15;
+const ROTATION_CONFIRM_GAP = 0.05;
+const MIN_SWITCH_EXPECTED_LIFT = 0.05;
+const SWITCH_EVALUATION_DAYS = 30;
+const SWITCH_NO_YIELD_DAYS = 2;
 
 function round(value: number | null, digits = 2): number | null {
   if (value === null || !Number.isFinite(value)) return null;
@@ -38,6 +50,22 @@ function median(values: number[]): number | null {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+function percentile(values: number[], percentileValue: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const position = (sorted.length - 1) * percentileValue;
+  const lowerIndex = Math.floor(position);
+  const upperIndex = Math.ceil(position);
+  if (lowerIndex === upperIndex) return sorted[lowerIndex];
+
+  const weight = position - lowerIndex;
+  return sorted[lowerIndex] * (1 - weight) + sorted[upperIndex] * weight;
+}
+
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function groupSnapshotHistory(db: DbShape, productCode: string): ProductSnapshot[] {
@@ -204,11 +232,175 @@ function recentPerformanceMetrics(history: ManagerNavPoint[]) {
   };
 }
 
-function buildHoldingInsight(holding: Holding, db: DbShape, marketBaseline: number | null): HoldingInsight {
+function winsorizedAverageAroundMedian(values: number[], medianValue: number | null): number | null {
+  if (values.length === 0 || medianValue === null) return null;
+  const cap = medianValue + PER10K_SPIKE_CAP;
+  return average(values.map((value) => Math.min(value, cap)));
+}
+
+function stableWindowMedian(values: number[], minSamples: number): number | null {
+  return values.length >= minSamples ? median(values) : null;
+}
+
+function stableWindowWinsorizedAverage(values: number[], minSamples: number): number | null {
+  if (values.length < minSamples) return null;
+  return winsorizedAverageAroundMedian(values, median(values));
+}
+
+function buildStableCoreMetrics(history: ManagerNavPoint[]): StableCoreMetrics {
+  const per10kHistory = continuousMetricHistory(history, (point) => point.per10kProfit);
+  const per10kSeries = per10kHistory
+    .map((point) => ({
+      navDate: point.navDate,
+      value: point.per10kProfit
+    }))
+    .filter((point): point is { navDate: string; value: number } => point.value !== null);
+  const latestPoint = per10kSeries.at(-1) ?? null;
+  const rawFreshnessDays = latestPoint ? daysBetween(todayIsoDate(), latestPoint.navDate) : Number.POSITIVE_INFINITY;
+  const navFreshnessDays = Number.isFinite(rawFreshnessDays) ? Math.max(0, rawFreshnessDays) : null;
+
+  const values14 = per10kSeries.slice(-STABLE_CORE_RECENT_WINDOW).map((point) => point.value);
+  const values30 = per10kSeries.slice(-STABLE_CORE_MAIN_WINDOW).map((point) => point.value);
+  const values60 = per10kSeries.slice(-STABLE_CORE_LONG_WINDOW).map((point) => point.value);
+
+  const recentPer10k30Median = stableWindowMedian(values30, MIN_STABLE_CORE_MAIN_SAMPLES);
+  const recentPer10k30WinsorizedAvg = stableWindowWinsorizedAverage(values30, MIN_STABLE_CORE_MAIN_SAMPLES);
+  const recentPer10k14Median = stableWindowMedian(values14, MIN_STABLE_CORE_RECENT_SAMPLES);
+  const recentPer10k14WinsorizedAvg = stableWindowWinsorizedAverage(values14, MIN_STABLE_CORE_RECENT_SAMPLES);
+  const recentPer10k60Median = stableWindowMedian(values60, MIN_STABLE_CORE_LONG_SAMPLES);
+  const q75 = values30.length >= MIN_STABLE_CORE_MAIN_SAMPLES ? percentile(values30, 0.75) : null;
+  const q25 = values30.length >= MIN_STABLE_CORE_MAIN_SAMPLES ? percentile(values30, 0.25) : null;
+  const stability30 = q75 !== null && q25 !== null ? q75 - q25 : null;
+  const spikeDays30 =
+    recentPer10k30Median === null
+      ? null
+      : values30.filter((value) => value > recentPer10k30Median + PER10K_SPIKE_CAP).length;
+  const stableCoreYield =
+    recentPer10k30WinsorizedAvg ??
+    recentPer10k30Median ??
+    recentPer10k14WinsorizedAvg ??
+    recentPer10k14Median ??
+    null;
+
+  return {
+    stableCoreYield,
+    stableCoreSamples: values30.length,
+    recentPer10k30Median,
+    recentPer10k30WinsorizedAvg,
+    recentPer10k14Median,
+    recentPer10k14WinsorizedAvg,
+    recentPer10k60Median,
+    spikeDays30,
+    stability30,
+    latestNavDate: latestPoint?.navDate ?? null,
+    navFreshnessDays
+  };
+}
+
+function roundStableCoreMetrics(metrics: StableCoreMetrics): StableCoreMetrics {
+  return {
+    stableCoreYield: round(metrics.stableCoreYield, 4),
+    stableCoreSamples: metrics.stableCoreSamples,
+    recentPer10k30Median: round(metrics.recentPer10k30Median, 4),
+    recentPer10k30WinsorizedAvg: round(metrics.recentPer10k30WinsorizedAvg, 4),
+    recentPer10k14Median: round(metrics.recentPer10k14Median, 4),
+    recentPer10k14WinsorizedAvg: round(metrics.recentPer10k14WinsorizedAvg, 4),
+    recentPer10k60Median: round(metrics.recentPer10k60Median, 4),
+    spikeDays30: metrics.spikeDays30,
+    stability30: round(metrics.stability30, 4),
+    latestNavDate: metrics.latestNavDate,
+    navFreshnessDays: metrics.navFreshnessDays
+  };
+}
+
+function hasRecentCoreDeterioration(metrics: StableCoreMetrics): boolean {
+  const coreYield = metrics.recentPer10k30WinsorizedAvg ?? metrics.recentPer10k30Median;
+  const recentYield = metrics.recentPer10k14WinsorizedAvg ?? metrics.recentPer10k14Median;
+  return coreYield !== null && recentYield !== null && recentYield < coreYield - 0.035;
+}
+
+function scoreStableCore(metrics: StableCoreMetrics, shouldHaveManagerHistory: boolean): number {
+  const coreYield = metrics.stableCoreYield;
+  if (coreYield === null) return shouldHaveManagerHistory ? -60 : -30;
+
+  const recentYield = metrics.recentPer10k14WinsorizedAvg ?? metrics.recentPer10k14Median;
+  const longYield = metrics.recentPer10k60Median;
+  const recentConfirmationScore =
+    recentYield === null
+      ? -8
+      : recentYield >= coreYield - 0.02
+        ? 8 + Math.min(6, Math.max(0, (recentYield - coreYield) * 80))
+        : Math.max(-18, (recentYield - coreYield) * 160);
+  const longSupportScore =
+    longYield === null
+      ? -4
+      : longYield >= coreYield - 0.05
+        ? 8
+        : Math.max(-12, (longYield - coreYield) * 120);
+  const samplePenalty = metrics.stableCoreSamples >= STABLE_CORE_MAIN_WINDOW
+    ? 0
+    : Math.max(0, (STABLE_CORE_MAIN_WINDOW - metrics.stableCoreSamples) * 1.1);
+  const freshnessPenalty =
+    metrics.navFreshnessDays === null
+      ? 25
+      : metrics.navFreshnessDays <= 3
+        ? 0
+        : Math.min(30, (metrics.navFreshnessDays - 3) * 4);
+  const stabilityPenalty = metrics.stability30 === null ? 10 : Math.min(24, metrics.stability30 * 80);
+  const spikePenalty = metrics.spikeDays30 === null ? 8 : Math.min(24, metrics.spikeDays30 * 4);
+
+  return coreYield * 100 + recentConfirmationScore + longSupportScore - samplePenalty - freshnessPenalty - stabilityPenalty - spikePenalty;
+}
+
+function classifyCandidateStage(metrics: StableCoreMetrics): CandidateInsight["stage"] {
+  if (metrics.stableCoreYield === null) return "stale";
+  if (metrics.navFreshnessDays === null || metrics.navFreshnessDays > 7) return "stale";
+  if (metrics.stableCoreSamples < MIN_STABLE_CORE_MAIN_SAMPLES) return "watch";
+  if (hasRecentCoreDeterioration(metrics)) return "watch";
+
+  const stableEnough = metrics.stability30 !== null && metrics.stability30 <= 0.08;
+  const lowSpikeCount = metrics.spikeDays30 !== null && metrics.spikeDays30 <= 3;
+  const longTermSupport =
+    metrics.recentPer10k60Median === null ||
+    metrics.recentPer10k60Median >= metrics.stableCoreYield - 0.06;
+
+  if (metrics.stableCoreSamples >= 25 && stableEnough && lowSpikeCount && longTermSupport) {
+    return "core";
+  }
+
+  return "candidate";
+}
+
+function stableCoreConfidence(metrics: StableCoreMetrics, shouldHaveManagerHistory: boolean): "low" | "medium" | "high" {
+  if (metrics.stableCoreYield === null) return "low";
+  if (metrics.navFreshnessDays === null || metrics.navFreshnessDays > 7) return "low";
+  if (metrics.stableCoreSamples >= 25 && metrics.stability30 !== null && metrics.stability30 <= 0.09) return "high";
+  if (metrics.stableCoreSamples >= MIN_STABLE_CORE_MAIN_SAMPLES) return "medium";
+  return shouldHaveManagerHistory ? "low" : "medium";
+}
+
+function estimateSwitchExpectedLift(currentCoreYield: number | null, candidateCoreYield: number | null) {
+  if (currentCoreYield === null || candidateCoreYield === null) {
+    return null;
+  }
+
+  return (
+    (candidateCoreYield * (SWITCH_EVALUATION_DAYS - SWITCH_NO_YIELD_DAYS)) / SWITCH_EVALUATION_DAYS -
+    currentCoreYield
+  );
+}
+
+function buildHoldingInsight(
+  holding: Holding,
+  db: DbShape,
+  marketBaseline: number | null,
+  switchTarget: CandidateInsight | null
+): HoldingInsight {
   const snapshotHistory = groupSnapshotHistory(db, holding.productCode);
   const performanceHistory = groupPerformanceHistory(db, holding.productCode);
   const performanceSamples = performanceHistory.length;
   const latest = snapshotHistory.at(-1) ?? null;
+  const shouldHaveManagerHistory = latest ? expectsManagerHistory(latest) : false;
 
   const peakSnapshotRate = snapshotHistory.reduce<number | null>((max, item) => {
     if (item.incomeRate === null) return max;
@@ -222,102 +414,112 @@ function buildHoldingInsight(holding: Holding, db: DbShape, marketBaseline: numb
   const marketGap = rate !== null && marketBaseline !== null ? rate - marketBaseline : null;
   const snapshotDrawdown = rate !== null && peakSnapshotRate !== null ? peakSnapshotRate - rate : null;
   const metrics = recentPerformanceMetrics(performanceHistory);
-  const performanceTrendSamples = metrics.dailyPerformanceSamples;
-  const hasShortPerformanceTrend = performanceTrendSamples >= 3;
-  const hasReliablePerformanceTrend = performanceTrendSamples >= 6;
+  const stableMetrics = buildStableCoreMetrics(performanceHistory);
   const hasSparsePerformanceHistory = performanceSamples >= 3 && metrics.dailyPerformanceSamples < 3;
+  const bestCandidateCoreYield = switchTarget?.stableCoreYield ?? null;
+  const bestCandidateCoreYieldGap =
+    bestCandidateCoreYield !== null && stableMetrics.stableCoreYield !== null
+      ? bestCandidateCoreYield - stableMetrics.stableCoreYield
+      : null;
+  const switchExpectedLiftPer10k = estimateSwitchExpectedLift(stableMetrics.stableCoreYield, bestCandidateCoreYield);
 
   const reasons: string[] = [];
   let signal: HoldingInsight["signal"] = "hold";
-  let confidence: HoldingInsight["confidence"] =
-    hasReliablePerformanceTrend ? "high" : hasShortPerformanceTrend || snapshotHistory.length >= 4 ? "medium" : "low";
+  let confidence: HoldingInsight["confidence"] = stableCoreConfidence(stableMetrics, shouldHaveManagerHistory);
 
-  const hasPerformanceMetric = metrics.recentPer10k !== null;
+  const hasPerformanceMetric = stableMetrics.stableCoreYield !== null || metrics.recentPer10k !== null;
 
   if ((!latest || rate === null) && !hasPerformanceMetric) {
-    signal = "insufficient_data";
-    reasons.push("当前样本还不够判断去留，先别因为一次榜单波动就调仓。");
-    reasons.push("暂未抓到这只持仓的最新收益快照或管理人万份收益历史，先不要依据当前结果调仓。");
+    signal = "hold";
+    reasons.push("当前样本还不够判断稳态核心收益，操作建议先持有，不因为一次展示收益变化卖出。");
+    reasons.push("暂未抓到这只持仓的最新收益快照或管理人万份收益历史，等官网万份样本补齐后再判断是否卖出。");
     confidence = "low";
   } else {
-    const usesPer10kTrend = metrics.recentPer10k !== null;
-    const per10kPullback =
-      (metrics.per10kDrawdown !== null && metrics.per10kDrawdown >= 0.08) ||
-      (metrics.per10kAcceleration !== null && metrics.per10kAcceleration <= -0.05);
-    const weakPerformance =
-      (usesPer10kTrend &&
-        ((metrics.per10kAcceleration !== null && metrics.per10kAcceleration < 0) ||
-          (metrics.per10kDrawdown !== null && metrics.per10kDrawdown >= 0.04)));
-    const confirmedPerformancePullback =
-      hasReliablePerformanceTrend &&
-      per10kPullback;
+    const dataStale = stableMetrics.navFreshnessDays === null || stableMetrics.navFreshnessDays > 7;
+    const underSampled = stableMetrics.stableCoreYield === null || stableMetrics.stableCoreSamples < MIN_STABLE_CORE_MAIN_SAMPLES;
+    const rotationGapMet = bestCandidateCoreYieldGap !== null && bestCandidateCoreYieldGap >= ROTATION_CONFIRM_GAP;
+    const switchExpectedLiftMet =
+      switchExpectedLiftPer10k !== null && switchExpectedLiftPer10k >= MIN_SWITCH_EXPECTED_LIFT;
 
-    const sellLike =
-      hasReliablePerformanceTrend &&
-      (confirmedPerformancePullback ||
-        (marketGap !== null && marketGap <= 0.08 && weakPerformance) ||
-        (marketGap !== null && marketGap < 0 && weakPerformance) ||
-        (marketGap !== null && marketGap <= 0.1 && snapshotDrawdown !== null && snapshotDrawdown >= 0.2));
-
-    const watchLike =
-      !sellLike &&
-      ((hasShortPerformanceTrend && weakPerformance) ||
-        (marketGap !== null && marketGap <= 0.2) ||
-        (sevenDayChange !== null && sevenDayChange < 0) ||
-        (!hasShortPerformanceTrend && snapshotDrawdown !== null && snapshotDrawdown >= 0.2));
-
-    if (sellLike) {
+    if (rotationGapMet && switchExpectedLiftMet && !dataStale && !underSampled) {
       signal = "sell";
-    } else if (watchLike) {
-      signal = "watch";
     } else {
       signal = "hold";
     }
 
     if (signal === "sell") {
-      reasons.push("万份收益已经确认从高位回落，短期重新冲回强势区的概率不高，建议直接换到更强的产品。");
-    } else if (signal === "watch") {
-      reasons.push("当前还没弱到必须卖，但万份收益已有走弱迹象，接下来几次刷新要重点盯。");
+      reasons.push("持仓核心万份收益落后候选，且扣除在途拖累后预计万份收益提高达到阈值，操作建议卖出。");
     } else {
-      reasons.push("当前万份收益主线还没出现明确走弱，暂时没必要急着动这只持仓。");
+      reasons.push("操作建议持有；当前还没有满足卖出条件，低频策略下不为了小差距损失在途收益。");
     }
 
     if (!latest || rate === null) {
-      reasons.push("浦发列表快照暂缺，本次主要依据管理人官网万份收益历史判断。");
+      reasons.push("浦发列表 7 日年化快照暂缺，本次主要依据管理人官网万份收益历史判断。");
     }
-    if (!hasShortPerformanceTrend) {
+    if (stableMetrics.stableCoreYield !== null) {
+      reasons.push(
+        `近 30 日核心万份约 ${round(stableMetrics.stableCoreYield, 4)}，样本 ${stableMetrics.stableCoreSamples} 个观测日。`
+      );
+    }
+    if (stableMetrics.recentPer10k14WinsorizedAvg !== null && stableMetrics.recentPer10k30WinsorizedAvg !== null) {
+      const recentGap = stableMetrics.recentPer10k14WinsorizedAvg - stableMetrics.recentPer10k30WinsorizedAvg;
+      reasons.push(
+        recentGap >= -0.035
+          ? "近 14 日截尾均值没有明显低于 30 日核心水平。"
+          : "近 14 日截尾均值已经明显低于 30 日核心水平。"
+      );
+    }
+    if (switchTarget && bestCandidateCoreYield !== null) {
+      reasons.push(
+        `换仓测算对标候选：${switchTarget.product.productName}（${switchTarget.product.productCode}），核心万份约 ${round(bestCandidateCoreYield, 4)}。`
+      );
+    }
+    if (bestCandidateCoreYieldGap !== null) {
+      reasons.push(
+        bestCandidateCoreYieldGap >= ROTATION_CONFIRM_GAP
+          ? `当前最佳候选核心万份高出约 ${round(bestCandidateCoreYieldGap, 4)}，已达到候选差距阈值。`
+          : `当前最佳候选核心万份只高出约 ${round(bestCandidateCoreYieldGap, 4)}，不足以覆盖低频轮动的在途成本。`
+      );
+    }
+    if (switchExpectedLiftPer10k !== null) {
+      reasons.push(
+        switchExpectedLiftPer10k >= MIN_SWITCH_EXPECTED_LIFT
+          ? `按 ${SWITCH_EVALUATION_DAYS} 天低频持有、${SWITCH_NO_YIELD_DAYS} 天在途无收益折算，换仓后预计万份收益提高约 ${round(switchExpectedLiftPer10k, 4)}，达到卖出阈值。`
+          : `按 ${SWITCH_EVALUATION_DAYS} 天低频持有、${SWITCH_NO_YIELD_DAYS} 天在途无收益折算，换仓后预计万份收益提高约 ${round(switchExpectedLiftPer10k, 4)}，未达到卖出阈值 ${MIN_SWITCH_EXPECTED_LIFT}。`
+      );
+    }
+    if (stableMetrics.stability30 !== null) {
+      reasons.push(`近 30 日万份收益 IQR 约 ${round(stableMetrics.stability30, 4)}，用于判断稳定性。`);
+    }
+    if (stableMetrics.spikeDays30 !== null && stableMetrics.spikeDays30 > 0) {
+      reasons.push(`近 30 日有 ${stableMetrics.spikeDays30} 天超过中位数 +0.15，已按 spike 风险降权。`);
+    }
+    if (dataStale) {
+      reasons.push("最新官网万份收益日期偏旧，调仓前需要先刷新确认。");
+    }
+    if (underSampled) {
       reasons.push(
         hasSparsePerformanceHistory
-          ? "管理人官网万份收益历史存在大断档，暂不能拿来计算日频动能，浦发列表快照仅作横向参考。"
-          : "管理人官网万份收益日频样本还不够，浦发列表快照仅作横向参考，只适合先观察。"
+          ? "管理人官网万份收益历史存在大断档，暂不能拼成稳定 30 日核心窗口。"
+          : "管理人官网万份收益样本还不够，暂不能形成稳定 30 日核心窗口。"
       );
     }
-    if (marketGap !== null && marketGap <= 0.1) {
-      reasons.push("浦发列表展示收益率已经接近或低于市场平均水平。");
+    if (marketGap !== null) {
+      reasons.push(`浦发列表 7 日年化相对池内平均 ${round(marketGap)} 个百分点，仅作展示参考。`);
     }
     if (snapshotDrawdown !== null && snapshotDrawdown >= 0.3) {
-      reasons.push("浦发列表展示收益率相对近期高点已经出现明显回落。");
-    }
-    if (sevenDayChange !== null && sevenDayChange <= -0.12) {
-      reasons.push("最近 7 天浦发列表收益快照下滑较快。");
+      reasons.push("浦发列表展示收益率相对近期高点回落，但不单独作为卖出依据。");
     }
     if (metrics.recentPer10k !== null) {
-      reasons.push(`最近 3 个观测点的万份收益均值约 ${round(metrics.recentPer10k, 4)}。`);
-    }
-    if (metrics.per10kAcceleration !== null) {
-      reasons.push(
-        metrics.per10kAcceleration >= 0 ? "万份收益较上一阶段继续抬升。" : "万份收益较上一阶段回落。"
-      );
-    }
-    if (metrics.per10kDrawdown !== null && metrics.per10kDrawdown >= 0.04) {
-      reasons.push(`万份收益距近期高点回落约 ${round(metrics.per10kDrawdown, 4)}。`);
+      reasons.push(`最近 3 个观测点万份均值约 ${round(metrics.recentPer10k, 4)}，仅用于短期辅助观察。`);
     }
     if (reasons.length === 0) {
-      reasons.push("当前万份收益没有出现明确走弱信号。");
+      reasons.push("当前核心万份收益没有出现明确走弱信号。");
     }
   }
 
   return {
+    ...roundStableCoreMetrics(stableMetrics),
     holding,
     latest,
     latestHistory: snapshotHistory.slice(-10),
@@ -334,6 +536,11 @@ function buildHoldingInsight(holding: Holding, db: DbShape, marketBaseline: numb
     recentAnnualized: round(metrics.recentAnnualized),
     priorAnnualized: round(metrics.priorAnnualized),
     acceleration: round(metrics.acceleration, metrics.accelerationSource === "per10k" ? 4 : 2),
+    switchTargetProductCode: switchTarget?.product.productCode ?? null,
+    switchTargetProductName: switchTarget?.product.productName ?? null,
+    bestCandidateCoreYield: round(bestCandidateCoreYield, 4),
+    bestCandidateCoreYieldGap: round(bestCandidateCoreYieldGap, 4),
+    switchExpectedLiftPer10k: round(switchExpectedLiftPer10k, 4),
     signal,
     confidence,
     reasons
@@ -343,7 +550,6 @@ function buildHoldingInsight(holding: Holding, db: DbShape, marketBaseline: numb
 function buildCandidateInsight(
   product: ProductSnapshot,
   db: DbShape,
-  marketAverage: number | null,
   marketMedian: number | null
 ): CandidateInsight {
   const snapshotHistory = groupSnapshotHistory(db, product.productCode);
@@ -355,126 +561,76 @@ function buildCandidateInsight(
   const recentBase = findPastRate(snapshotHistory, 3);
   const recentChange = currentRate !== null && recentBase !== null ? currentRate - recentBase : null;
   const marketPremium = currentRate !== null && marketMedian !== null ? currentRate - marketMedian : null;
-  const ageDays = firstSeenAt
-    ? Math.max(0, Math.floor((Date.now() - new Date(firstSeenAt).getTime()) / (24 * 60 * 60 * 1000)))
-    : null;
-
-  const freshnessScore = ageDays === null ? 18 : Math.max(0, 18 - ageDays);
-  const premiumScore = marketPremium === null ? 0 : Math.max(0, marketPremium * 22);
-  const momentumScore =
-    recentChange === null
-      ? 5
-      : recentChange >= 0
-        ? 12 + recentChange * 30
-        : Math.max(0, 10 + recentChange * 40);
-
   const metrics = recentPerformanceMetrics(performanceHistory);
-  const performanceTrendSamples = metrics.dailyPerformanceSamples;
-  const hasShortPerformanceTrend = performanceTrendSamples >= 3;
-  const hasReliablePerformanceTrend = performanceTrendSamples >= 6;
+  const stableMetrics = buildStableCoreMetrics(performanceHistory);
   const hasSparsePerformanceHistory = performanceSamples >= 3 && metrics.dailyPerformanceSamples < 3;
-  const hasPer10kTrend = metrics.recentPer10k !== null;
-  const recentPer10kAnnualized = annualizedEquivalentFromPer10k(metrics.recentPer10k);
-  const performanceScore = hasShortPerformanceTrend
-    ? hasPer10kTrend
-      ? Math.max(
-          0,
-          (metrics.recentPer10k ?? 0) * 2.2 +
-            (metrics.per10kAcceleration ?? 0) * 12 -
-            (metrics.per10kDrawdown ?? 0) * 4
-        )
-      : 0
-    : 0;
-  const historyPenalty =
-    hasShortPerformanceTrend
-      ? 0
-      : shouldHaveManagerHistory
-        ? metrics.dailyPerformanceSamples === 0
-          ? 60
-          : 32
-        : metrics.dailyPerformanceSamples === 0
-          ? 24
-          : 12;
-  const score = premiumScore + freshnessScore + momentumScore + performanceScore - historyPenalty;
-
-  let stage: CandidateInsight["stage"] = "warming_up";
-  if (hasShortPerformanceTrend) {
-    const premium = marketPremium ?? 0;
-    const change = recentChange ?? 0;
-    const clearlyAheadByPer10k =
-      recentPer10kAnnualized !== null && marketAverage !== null
-        ? recentPer10kAnnualized >= marketAverage + 0.25
-        : metrics.recentPer10k !== null && metrics.recentPer10k >= 0.65;
-    const clearlyAhead = premium >= 0.6 || clearlyAheadByPer10k;
-    const stillRunningHot =
-      metrics.per10kAcceleration !== null
-        ? metrics.per10kAcceleration >= 0.015 || (metrics.per10kAcceleration >= 0 && change >= 0.08)
-        : false;
-    const trulyCooling =
-      hasReliablePerformanceTrend &&
-      premium < 0.45 &&
-      (hasPer10kTrend &&
-        change <= 0.05 &&
-        ((metrics.per10kAcceleration !== null && metrics.per10kAcceleration <= -0.025) ||
-          (metrics.per10kDrawdown !== null && metrics.per10kDrawdown >= 0.06)));
-
-    if (hasReliablePerformanceTrend && clearlyAhead && stillRunningHot) {
-      stage = "fresh_spike";
-    } else if (trulyCooling) {
-      stage = "fading";
-    } else if (clearlyAhead) {
-      stage = "mature";
-    }
-  }
+  const score = scoreStableCore(stableMetrics, shouldHaveManagerHistory);
+  const stage = classifyCandidateStage(stableMetrics);
+  const confidence = stableCoreConfidence(stableMetrics, shouldHaveManagerHistory);
 
   const reasons: string[] = [];
-  if (stage === "fresh_spike") {
-    reasons.push("万份收益仍在抬升，当前处在强势冲榜区间，适合优先放进对比名单。");
-  } else if (stage === "mature") {
-    reasons.push("万份收益处在高位稳定区间，吸引力还在，但更适合和同梯队产品横向比较。");
-  } else if (stage === "fading") {
-    reasons.push("万份收益开始回落，先别因为榜单位置靠前就直接追进去。");
+  if (stage === "core") {
+    reasons.push("近 30 日核心万份收益稳定靠前，可进入 2-4 只稳态持仓的核心比较池。");
+  } else if (stage === "candidate") {
+    reasons.push("核心万份收益有吸引力，但样本、稳定性或长期背书还需要继续确认。");
+  } else if (stage === "watch") {
+    reasons.push("当前只适合观察，近期确认、样本量或波动稳定性还没有达到核心候选标准。");
   } else {
-    reasons.push("当前还在观察期，先看后续几次万份收益能不能继续走强。");
+    reasons.push("官网万份收益数据不足或日期偏旧，先不要作为换仓依据。");
   }
-  if (!hasShortPerformanceTrend) {
+  if (stableMetrics.stableCoreYield !== null) {
+    reasons.push(
+      `近 30 日核心万份约 ${round(stableMetrics.stableCoreYield, 4)}，主信号来自 30 日截尾均值/中位数。`
+    );
+  }
+  if (stableMetrics.recentPer10k30WinsorizedAvg !== null) {
+    reasons.push(`30 日截尾均值约 ${round(stableMetrics.recentPer10k30WinsorizedAvg, 4)}，单日 spike 按中位数 +0.15 截尾。`);
+  }
+  if (stableMetrics.recentPer10k14WinsorizedAvg !== null && stableMetrics.recentPer10k30WinsorizedAvg !== null) {
+    const recentGap = stableMetrics.recentPer10k14WinsorizedAvg - stableMetrics.recentPer10k30WinsorizedAvg;
+    reasons.push(
+      recentGap >= -0.035
+        ? "近 14 日截尾均值没有明显变差，近期确认通过。"
+        : "近 14 日截尾均值低于 30 日核心值，已在排序里降权。"
+    );
+  }
+  if (stableMetrics.recentPer10k60Median !== null) {
+    reasons.push(`60 日万份中位数约 ${round(stableMetrics.recentPer10k60Median, 4)}，用于稳定性背书。`);
+  }
+  if (stableMetrics.stability30 !== null) {
+    reasons.push(`30 日稳定性 IQR 约 ${round(stableMetrics.stability30, 4)}，越小越适合低频持有。`);
+  }
+  if (stableMetrics.spikeDays30 !== null && stableMetrics.spikeDays30 > 0) {
+    reasons.push(`近 30 日有 ${stableMetrics.spikeDays30} 天超过中位数 +0.15，避免把单日脉冲当主信号。`);
+  }
+  if (stableMetrics.latestNavDate !== null) {
+    reasons.push(`最新官网万份日期 ${stableMetrics.latestNavDate}，距今 ${stableMetrics.navFreshnessDays ?? "--"} 天。`);
+  }
+  if (stableMetrics.stableCoreSamples < MIN_STABLE_CORE_MAIN_SAMPLES) {
     reasons.push(
       hasSparsePerformanceHistory
-        ? "管理人官网万份收益历史存在大断档，暂不能拿来计算日频动能，已在排序里降权。"
+        ? "管理人官网万份收益历史存在大断档，暂不能拼成稳定 30 日核心窗口，已在排序里降权。"
         : shouldHaveManagerHistory
-        ? "这类产品理论上应该能抓到官网万份收益历史，但当前样本还不够，已在排序里额外降权，先别只看浦发快照就追高。"
-        : "管理人官网万份收益历史样本还不够，当前候选排序主要参考浦发列表快照，可信度会低一些。"
+        ? "这类产品理论上应该能抓到官网万份收益历史，但当前样本还不够，已在排序里额外降权。"
+        : "管理人官网万份收益历史样本还不够，当前不应只看浦发快照。"
     );
   }
   if (marketPremium !== null) {
-    reasons.push(`浦发列表展示收益率相对池内中位数溢价 ${round(marketPremium)} 个百分点。`);
-  }
-  if (ageDays !== null) {
-    reasons.push(`本地首次发现距今 ${ageDays} 天，越短通常越接近打榜起点。`);
-  } else {
-    reasons.push("这是首次纳入本地观察，可能正处于较早阶段。");
+    reasons.push(`浦发列表 7 日年化相对池内中位数 ${round(marketPremium)} 个百分点，仅作展示参考，不进入买入主信号。`);
   }
   if (metrics.recentPer10k !== null) {
-    reasons.push(`最近 3 个观测点的万份收益均值约 ${round(metrics.recentPer10k, 4)}。`);
-  }
-  if (metrics.per10kAcceleration !== null) {
-    reasons.push(
-      metrics.per10kAcceleration >= 0 ? "万份收益较上一阶段继续抬升。" : "万份收益较上一阶段回落。"
-    );
-  }
-  if (metrics.per10kDrawdown !== null && metrics.per10kDrawdown >= 0.04) {
-    reasons.push(`万份收益距近期高点回落约 ${round(metrics.per10kDrawdown, 4)}。`);
+    reasons.push(`最近 3 个观测点万份均值约 ${round(metrics.recentPer10k, 4)}，仅作短期辅助观察。`);
   }
   if (recentChange !== null) {
-    reasons.push(recentChange >= 0 ? "最近几次浦发列表快照仍在走强。" : "最近几次浦发列表快照较前几日回落。");
-  } else {
-    reasons.push("历史样本还少，当前判断更多依赖横向比较。");
-  }
-  if (marketAverage !== null && currentRate !== null && currentRate < marketAverage) {
-    reasons.push("浦发列表展示收益率已经低于候选池平均值，应降低优先级。");
+    reasons.push(
+      recentChange >= 0
+        ? "浦发列表展示收益近期上行，但不作为追买信号。"
+        : "浦发列表展示收益近期回落，本次仅作为参考信息。"
+    );
   }
 
   return {
+    ...roundStableCoreMetrics(stableMetrics),
     product,
     latestHistory: snapshotHistory.slice(-10),
     navHistory: performanceHistory.slice(-12),
@@ -482,16 +638,7 @@ function buildCandidateInsight(
     dailyPerformanceSamples: metrics.dailyPerformanceSamples,
     score: round(score) ?? 0,
     stage,
-    confidence:
-      hasReliablePerformanceTrend
-        ? "high"
-        : hasShortPerformanceTrend
-          ? "medium"
-          : shouldHaveManagerHistory
-            ? "low"
-            : snapshotHistory.length >= 2
-              ? "medium"
-              : "low",
+    confidence,
     reasons,
     marketPremium: round(marketPremium),
     recentChange: round(recentChange),
@@ -515,14 +662,15 @@ export function buildDashboard(db: DbShape, marketProducts: ProductSnapshot[]): 
   const marketAverage = average(marketRates);
   const marketMedian = median(marketRates);
 
-  const holdings = db.holdings.map((holding) => buildHoldingInsight(holding, db, marketAverage));
   const holdingCodes = new Set(db.holdings.map((item) => item.productCode));
 
   const candidates = latestMarket
     .filter((product) => !holdingCodes.has(product.productCode))
-    .map((product) => buildCandidateInsight(product, db, marketAverage, marketMedian))
+    .map((product) => buildCandidateInsight(product, db, marketMedian))
     .sort((a, b) => b.score - a.score)
     .slice(0, 20);
+  const switchTarget = candidates.find((candidate) => candidate.stableCoreYield !== null) ?? null;
+  const holdings = db.holdings.map((holding) => buildHoldingInsight(holding, db, marketAverage, switchTarget));
 
   return {
     generatedAt: new Date().toISOString(),

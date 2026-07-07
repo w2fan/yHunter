@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { YieldHistoryChart } from "@/components/yield-history-chart";
-import type { CandidateInsight, DashboardData, HoldingInsight, ManagerNavPoint } from "@/lib/types";
+import type { CandidateInsight, DashboardData, HoldingInsight, ManagerNavPoint, StableCoreMetrics } from "@/lib/types";
 
 type RefreshProgress = {
   active: boolean;
@@ -46,10 +46,8 @@ function formatRefreshFailure(progress: RefreshProgress | null, fallback: string
 }
 
 const signalText = {
-  sell: "建议卖出",
-  watch: "重点观察",
-  hold: "继续持有",
-  insufficient_data: "先补数据"
+  sell: "卖出",
+  hold: "持有"
 } as const;
 
 function formatRate(value: number | null) {
@@ -74,6 +72,52 @@ function formatPer10kDiff(value: number | null) {
 
 function formatSampleCount(value: number) {
   return `${value} 条`;
+}
+
+function formatDays(value: number | null) {
+  return value === null ? "--" : `${value} 天`;
+}
+
+function formatSpikeDays(value: number | null) {
+  return value === null ? "--" : `${value} 天`;
+}
+
+function DetailLabel({ children, help }: { children: string; help: string }) {
+  return (
+    <div className="detail-label" title={help}>
+      {children}
+    </div>
+  );
+}
+
+const emptyStableCoreMetrics: StableCoreMetrics = {
+  stableCoreYield: null,
+  stableCoreSamples: 0,
+  recentPer10k30Median: null,
+  recentPer10k30WinsorizedAvg: null,
+  recentPer10k14Median: null,
+  recentPer10k14WinsorizedAvg: null,
+  recentPer10k60Median: null,
+  spikeDays30: null,
+  stability30: null,
+  latestNavDate: null,
+  navFreshnessDays: null
+};
+
+function pickStableCoreMetrics(insight: StableCoreMetrics): StableCoreMetrics {
+  return {
+    stableCoreYield: insight.stableCoreYield,
+    stableCoreSamples: insight.stableCoreSamples,
+    recentPer10k30Median: insight.recentPer10k30Median,
+    recentPer10k30WinsorizedAvg: insight.recentPer10k30WinsorizedAvg,
+    recentPer10k14Median: insight.recentPer10k14Median,
+    recentPer10k14WinsorizedAvg: insight.recentPer10k14WinsorizedAvg,
+    recentPer10k60Median: insight.recentPer10k60Median,
+    spikeDays30: insight.spikeDays30,
+    stability30: insight.stability30,
+    latestNavDate: insight.latestNavDate,
+    navFreshnessDays: insight.navFreshnessDays
+  };
 }
 
 function daysBetween(laterDate: string, earlierDate: string) {
@@ -214,47 +258,40 @@ function formatRefreshSummary(summary: DashboardData["lastRefreshSummary"]) {
 
 function signalBadge(signal: HoldingInsight["signal"]) {
   if (signal === "sell") return "badge badge-bad";
-  if (signal === "watch") return "badge badge-warn";
   return "badge badge-good";
 }
 
-function holdingActionHint(signal: HoldingInsight["signal"], confidence: HoldingInsight["confidence"]) {
+function holdingActionHint(signal: HoldingInsight["signal"]) {
   if (signal === "sell") {
-    return confidence === "high" ? "直接调仓" : "尽快调仓";
+    return "建议卖出";
   }
-  if (signal === "watch") {
-    return confidence === "high" ? "先重点盯盘" : "继续补样本";
-  }
-  if (signal === "hold") {
-    return confidence === "high" ? "暂不急着动" : "可继续持有但多看两次刷新";
-  }
-  return "先别急着下结论";
+  return "建议持有";
 }
 
 function candidateBadge(stage: CandidateInsight["stage"]) {
-  if (stage === "fresh_spike") return "badge badge-good";
-  if (stage === "fading") return "badge badge-bad";
+  if (stage === "core") return "badge badge-good";
+  if (stage === "stale") return "badge badge-bad";
   return "badge badge-warn";
 }
 
 function candidateStageLabel(stage: CandidateInsight["stage"]) {
-  if (stage === "fresh_spike") return "正在打榜";
-  if (stage === "mature") return "高位稳定";
-  if (stage === "fading") return "疑似退潮";
-  return "继续观察";
+  if (stage === "core") return "稳态核心";
+  if (stage === "candidate") return "核心候选";
+  if (stage === "watch") return "继续确认";
+  return "数据偏旧";
 }
 
 function candidateActionHint(stage: CandidateInsight["stage"], confidence: CandidateInsight["confidence"]) {
-  if (stage === "fresh_spike") {
-    return confidence === "high" ? "可优先跟进" : "先小仓观察";
+  if (stage === "core") {
+    return confidence === "high" ? "入核心池比较" : "先确认样本";
   }
-  if (stage === "mature") {
+  if (stage === "candidate") {
     return confidence === "high" ? "可重点比较" : "有吸引力但先确认";
   }
-  if (stage === "fading") {
-    return "别急着追高";
+  if (stage === "stale") {
+    return "先刷新官网数据";
   }
-  return confidence === "low" ? "先等更多样本" : "继续观察";
+  return confidence === "low" ? "先等更多样本" : "继续确认";
 }
 
 function RefreshIcon() {
@@ -269,11 +306,10 @@ function RefreshIcon() {
 }
 
 function holdingFromCandidate(candidate: CandidateInsight, holding: HoldingInsight["holding"]): HoldingInsight {
-  const signal: HoldingInsight["signal"] =
-    candidate.stage === "fading" ? "watch" : candidate.stage === "mature" ? "hold" : "watch";
   const per10kFields = buildPer10kFields(candidate);
 
   const insight: HoldingInsight & Per10kInsightFields = {
+    ...pickStableCoreMetrics(candidate),
     holding,
     latest: candidate.product,
     latestHistory: candidate.latestHistory,
@@ -285,11 +321,16 @@ function holdingFromCandidate(candidate: CandidateInsight, holding: HoldingInsig
     recentAnnualized: candidate.recentAnnualized,
     priorAnnualized: candidate.priorAnnualized,
     acceleration: candidate.acceleration,
+    switchTargetProductCode: candidate.product.productCode,
+    switchTargetProductName: candidate.product.productName,
+    bestCandidateCoreYield: candidate.stableCoreYield,
+    bestCandidateCoreYieldGap: 0,
+    switchExpectedLiftPer10k: null,
     ...per10kFields,
-    signal,
+    signal: "hold",
     confidence: candidate.confidence,
     reasons: [
-      "已从候选池加入持仓，沿用当前本地分析结果；下次刷新时会再补最新官方数据。",
+      "已从候选池加入持仓，沿用当前核心万份分析结果；下次刷新时会再补最新官方数据。",
       ...candidate.reasons
     ]
   };
@@ -441,6 +482,7 @@ export default function HomePage({ appVersion }: HomePageProps) {
             generatedAt: new Date().toISOString(),
             holdings: [
               {
+                ...emptyStableCoreMetrics,
                 holding: data,
                 latest: null,
                 latestHistory: [],
@@ -453,7 +495,12 @@ export default function HomePage({ appVersion }: HomePageProps) {
                 recentAnnualized: null,
                 priorAnnualized: null,
                 acceleration: null,
-                signal: "insufficient_data",
+                switchTargetProductCode: null,
+                switchTargetProductName: null,
+                bestCandidateCoreYield: null,
+                bestCandidateCoreYieldGap: null,
+                switchExpectedLiftPer10k: null,
+                signal: "hold",
                 confidence: "low",
                 reasons: ["已加入持仓，等待下次刷新补全最新官方快照和管理人历史。"]
               },
@@ -542,18 +589,18 @@ export default function HomePage({ appVersion }: HomePageProps) {
       <div className="page-inner">
         <section className="hero">
           <div className="hero-heading-row">
-            <h1>打榜理财猎手</h1>
+            <h1>稳态现金管理筛选</h1>
             <span className="version-pill" title="服务器当前 Git 版本">
               版本 {appVersion}
             </span>
           </div>
           <p>
-            盯住浦发公告代销的日日丰、R1、人民币现金管理类理财，识别谁在打榜、谁回归了均值。
+            用管理人官网每日万份收益筛出稳态核心产品，低频比较、少动仓位，不追单日脉冲。
           </p>
           <div className="hero-toolbar">
             <div className="hero-meta">
-              <span className="pill">默认卖出规则：回归均值 + 高位回落</span>
-              <span className="pill">候选规则：收益溢价 + 新鲜度 + 万份动能</span>
+              <span className="pill">持仓规则：核心万份差距 ≥0.04-0.05 后连续确认</span>
+              <span className="pill">候选规则：30 日核心万份 + 14 日确认 + 60 日背书</span>
             </div>
           </div>
           {refreshing || refreshProgress?.active ? (
@@ -579,7 +626,7 @@ export default function HomePage({ appVersion }: HomePageProps) {
           <div className="split-title">
             <div>
               <h2>市场概况</h2>
-              <p>只统计浦发官网中筛选出的 `日日丰 / R1低风险 / 人民币` 在售产品。</p>
+              <p>只统计浦发官网中筛选出的 `日日丰 / R1低风险 / 人民币` 在售产品；7 日年化仅作展示参考。</p>
             </div>
             <div className="market-tools">
               <div className="pill sync-pill">
@@ -607,15 +654,15 @@ export default function HomePage({ appVersion }: HomePageProps) {
               <div className="stat-value">{dashboard?.marketSummary.totalProducts ?? "--"}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-label">平均收益</div>
+              <div className="stat-label">平均展示收益</div>
               <div className="stat-value">{formatRate(dashboard?.marketSummary.averageYield ?? null)}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-label">中位收益</div>
+              <div className="stat-label">中位展示收益</div>
               <div className="stat-value">{formatRate(dashboard?.marketSummary.medianYield ?? null)}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-label">最高收益</div>
+              <div className="stat-label">最高展示收益</div>
               <div className="stat-value">{formatRate(dashboard?.marketSummary.highestYield ?? null)}</div>
             </div>
           </div>
@@ -651,46 +698,70 @@ export default function HomePage({ appVersion }: HomePageProps) {
 
                     <div className="detail-grid">
                       <div className="detail">
-                        <div className="detail-label">当前收益率</div>
+                        <DetailLabel help="浦发列表展示的 7 日年化或收益率快照，仅作展示参考，不作为买入或卖出主信号。">
+                          展示7日年化
+                        </DetailLabel>
                         <div className="detail-value">{formatRate(item.latest?.incomeRate ?? null)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">日频样本</div>
-                        <div className="detail-value">{formatSampleCount(getDailyPerformanceSamples(item))}</div>
+                        <DetailLabel help="最近连续官网万份收益尾部中，进入 30 日核心窗口的有效观测天数，最多 30 条。">
+                          核心样本
+                        </DetailLabel>
+                        <div className="detail-value">{formatSampleCount(item.stableCoreSamples)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">相对均值</div>
-                        <div className="detail-value">{formatDiff(item.marketGap)}</div>
+                        <DetailLabel help="最近 30 个连续官网万份收益观测日中，超过 30 日中位数 +0.15 的单日值按上限截尾后求均值。">
+                          30日截尾均值
+                        </DetailLabel>
+                        <div className="detail-value">{formatPer10k(item.recentPer10k30WinsorizedAvg)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">快照7天变化</div>
-                        <div className="detail-value">{formatDiff(item.sevenDayChange)}</div>
+                        <DetailLabel help="最近 30 个连续官网万份收益观测日的中位数，用来代表稳态水平并降低单日脉冲影响。">
+                          30日中位数
+                        </DetailLabel>
+                        <div className="detail-value">{formatPer10k(item.recentPer10k30Median)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">近期万份收益</div>
-                        <div className="detail-value">{formatPer10k(getRecentPer10k(item))}</div>
+                        <DetailLabel help="最近 14 个连续官网万份收益观测日按同样截尾规则求均值，用来确认近期收益是否变差。">
+                          14日截尾均值
+                        </DetailLabel>
+                        <div className="detail-value">{formatPer10k(item.recentPer10k14WinsorizedAvg)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">万份收益动能</div>
-                        <div className="detail-value">{formatPer10kDiff(getPer10kAcceleration(item))}</div>
+                        <DetailLabel help="换仓对标候选的核心万份减去本持仓核心万份。优先使用 30 日截尾均值，缺失时回退到可用稳态口径。">
+                          候选核心差距
+                        </DetailLabel>
+                        <div className="detail-value">{formatPer10kDiff(item.bestCandidateCoreYieldGap)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">万份距高点</div>
-                        <div className="detail-value">{formatPer10k(getPer10kDrawdown(item))}</div>
+                        <DetailLabel help="用于换仓测算的候选产品：候选池中按稳态核心得分排序第一、且有核心万份数据的产品。">
+                          换仓对标
+                        </DetailLabel>
+                        <div className="detail-value">
+                          {item.switchTargetProductName
+                            ? `${item.switchTargetProductName} ${item.switchTargetProductCode ?? ""}`
+                            : "--"}
+                        </div>
+                      </div>
+                      <div className="detail">
+                        <DetailLabel help="按 30 天低频持有、2 天申赎在途无收益折算后，换到对标候选预计每天万份收益可提高多少。">
+                          换仓预计提高万份
+                        </DetailLabel>
+                        <div className="detail-value">{formatPer10kDiff(item.switchExpectedLiftPer10k)}</div>
                       </div>
                     </div>
 
                     <div className="badge-row">
                       <span className="badge">置信度 {item.confidence}</span>
-                      <span className="badge">{holdingActionHint(item.signal, item.confidence)}</span>
+                      <span className="badge">{holdingActionHint(item.signal)}</span>
                     </div>
 
                     <YieldHistoryChart
                       navHistory={item.navHistory}
                       recommendationLabel={`${signalText[item.signal]} · ${item.confidence}`}
-                      recommendationHint={holdingActionHint(item.signal, item.confidence)}
+                      recommendationHint={holdingActionHint(item.signal)}
                       recommendationTone={
-                        item.signal === "sell" ? "bad" : item.signal === "watch" ? "warn" : item.signal === "hold" ? "good" : "neutral"
+                        item.signal === "sell" ? "bad" : "good"
                       }
                     />
 
@@ -773,34 +844,42 @@ export default function HomePage({ appVersion }: HomePageProps) {
                     </div>
 
                     <div className="score-strip">
-                      <div className="score-strip-label">候选得分</div>
+                      <div className="score-strip-label">核心得分</div>
                       <div className="score-strip-value">{item.score.toFixed(1)}</div>
                     </div>
 
                     <div className="detail-grid">
                       <div className="detail">
-                        <div className="detail-label">当前收益率</div>
+                        <div className="detail-label">展示7日年化</div>
                         <div className="detail-value">{formatRate(item.product.incomeRate)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">日频样本</div>
-                        <div className="detail-value">{formatSampleCount(getDailyPerformanceSamples(item))}</div>
+                        <div className="detail-label">核心样本</div>
+                        <div className="detail-value">{formatSampleCount(item.stableCoreSamples)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">相对中位溢价</div>
-                        <div className="detail-value">{formatDiff(item.marketPremium)}</div>
+                        <div className="detail-label">30日截尾均值</div>
+                        <div className="detail-value">{formatPer10k(item.recentPer10k30WinsorizedAvg)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">快照近几日变化</div>
-                        <div className="detail-value">{formatDiff(item.recentChange)}</div>
+                        <div className="detail-label">30日中位数</div>
+                        <div className="detail-value">{formatPer10k(item.recentPer10k30Median)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">近期万份收益</div>
-                        <div className="detail-value">{formatPer10k(getRecentPer10k(item))}</div>
+                        <div className="detail-label">14日截尾均值</div>
+                        <div className="detail-value">{formatPer10k(item.recentPer10k14WinsorizedAvg)}</div>
                       </div>
                       <div className="detail">
-                        <div className="detail-label">万份收益动能</div>
-                        <div className="detail-value">{formatPer10kDiff(getPer10kAcceleration(item))}</div>
+                        <div className="detail-label">60日中位数</div>
+                        <div className="detail-value">{formatPer10k(item.recentPer10k60Median)}</div>
+                      </div>
+                      <div className="detail">
+                        <div className="detail-label">Spike天数</div>
+                        <div className="detail-value">{formatSpikeDays(item.spikeDays30)}</div>
+                      </div>
+                      <div className="detail">
+                        <div className="detail-label">净值新鲜度</div>
+                        <div className="detail-value">{formatDays(item.navFreshnessDays)}</div>
                       </div>
                     </div>
 
@@ -813,7 +892,7 @@ export default function HomePage({ appVersion }: HomePageProps) {
                       navHistory={item.navHistory}
                       recommendationLabel={`${candidateStageLabel(item.stage)} · ${item.confidence}`}
                       recommendationHint={candidateActionHint(item.stage, item.confidence)}
-                      recommendationTone={item.stage === "fresh_spike" ? "good" : item.stage === "fading" ? "bad" : "warn"}
+                      recommendationTone={item.stage === "core" ? "good" : item.stage === "stale" ? "bad" : "warn"}
                     />
 
                     <ul className="reason-list">
